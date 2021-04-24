@@ -58,6 +58,7 @@ namespace Sounds
         } \
 
     ADD_SOUND(dirt_breaks, 0.5)
+    ADD_SOUND(landing, 0.2)
 
     #undef ADD_SOUND
 }
@@ -183,26 +184,44 @@ struct ParticleController
             pa.Draw(viewport_center, viewport_size);
     }
 
+    static Particle ParticleDirt(fvec2 pos, fvec2 vel, float min_size, float max_size, int max_time )
+    {
+        float p = 0 <= randomize.real() <= 1;
+        return adjust(Particle{}
+            , pos = pos
+            , vel = vel
+            , acc = fvec2(0,0.05)
+            , max_time = max_time
+            , damp = mix(p, 0.01, 0.03)
+            , p.size = mix(p, max_size, min_size)
+            , p.color = (std::array{fvec3(139, 90, 60) / 255, fvec3(101, 62, 41) / 255, fvec3(159, 111, 56) / 255}[randomize.integer() < 3] * float(0.9 <= randomize.real() <= 1.1))
+            , p1 = _object_.p
+            , p1->t = _object_.max_time
+            , p1->size = 0
+        );
+    }
+
     void EffectDirtDestroyed(fvec2 center_pos, fvec2 area, int n = 15)
     {
         while (n-- > 0)
         {
-            float p = 0 <= randomize.real() <= 1;
+            particles.push_back(ParticleDirt(
+                center_pos + fvec2(-area.x/2 <= randomize.real() <= area.x/2, -area.y/2 <= randomize.real() <= area.y/2),
+                fvec2::dir(randomize.angle(), 0 <= randomize.real() <= 1),
+                2, 8, 30 <= randomize.integer() <= 60)
+            );
+        }
+    }
 
-            particles.push_back(adjust(Particle{}
-                , pos = center_pos + fvec2(-area.x/2 <= randomize.real() <= area.x/2, -area.y/2 <= randomize.real() <= area.y/2)
-                , vel = fvec2::dir(randomize.angle(), 0 <= randomize.real() <= 1)
-                , acc = fvec2(0,0.05)
-                , max_time = 30 <= randomize.integer() <= 60
-                , damp = mix(p, 0.01, 0.03)
-                , p.size = mix(p, 8, 2)
-                , p.color = (std::array{fvec3(139, 90, 60) / 255, fvec3(101, 62, 41) / 255, fvec3(159, 111, 56) / 255}[randomize.integer() < 3] * float(0.9 <= randomize.real() <= 1.1))
-                // , p2 = _object_.p
-                // , p2->t = _object_.max_time / 2
-                , p1 = _object_.p
-                , p1->t = _object_.max_time
-                , p1->size = 0
-            ));
+    void EffectDirtMinor(fvec2 center_pos, fvec2 area, int n)
+    {
+        while (n-- > 0)
+        {
+            particles.push_back(ParticleDirt(
+                center_pos + fvec2(-area.x/2 <= randomize.real() <= area.x/2, -area.y/2 <= randomize.real() <= area.y/2),
+                fvec2::dir(randomize.angle(), 0 <= randomize.real() <= 1),
+                2, 6, 20 <= randomize.integer() <= 40)
+            );
         }
     }
 };
@@ -215,6 +234,10 @@ namespace MapPoints
         ivec2 worm_starting_pos{};
         ivec2 worm_starting_dir{};
         int worm_starting_len = 4;
+
+        bool exit_placed = false;
+        ivec2 exit_pos{};
+        ivec2 exit_dir{};
     };
 
     STRUCT( Base POLYMORPHIC )
@@ -237,6 +260,22 @@ namespace MapPoints
             state.worm_starting_pos = tile_pos;
             state.worm_starting_dir = dir;
             state.worm_starting_len = len;
+        }
+    };
+
+    STRUCT( Exit EXTENDS Base )
+    {
+        MEMBERS(
+            DECL(ivec2) dir
+        )
+
+        void Process(State &state, ivec2 tile_pos) override
+        {
+            if (state.worm_placed)
+                Program::Error("More than one exit.");
+            state.exit_placed = true;
+            state.exit_pos = tile_pos;
+            state.exit_dir = dir;
         }
     };
 }
@@ -508,7 +547,9 @@ struct Worm
 {
     std::vector<ivec2> segments; // This is sorted tail-to-head.
     int crawl_offset = 0;
-    int fall_offset = 0;
+    float fall_offset = 0;
+    float fall_speed = 0;
+    bool dead = false;
 
     ivec2 ChooseDirection(const Map &map) const
     {
@@ -520,39 +561,16 @@ struct Worm
         if (!current_dir)
             current_dir = map.data.worm_starting_dir;
 
-        struct Priority
+        auto GetPathPriority = [&](ivec2 tile_pos) -> int
         {
-            bool valid = true;
-            bool has_support = true;
-            int tile_priority = 0;
-            auto operator<=>(const Priority &) const = default;
-        };
-        auto GetPathPriority = [&](ivec2 tile_pos) -> Priority
-        {
-            Priority ret;
+            int ret = 0;
 
             if (std::find(segments.begin(), segments.end(), tile_pos) != segments.end())
-                ret.tile_priority = 0;
+                ret = 0; // Refuse to touch your own body.
+            else if (tile_pos == map.data.exit_pos && tile_pos - segments.back() == -map.data.exit_dir)
+                ret = 98; // Go the exit if possible.
             else
-                ret.tile_priority = map.InfoAt(tile_pos).path_priority;
-
-            ret.valid = ret.tile_priority > 0;
-
-            auto TileHasSupport = [&](ivec2 pos)
-            {
-                return map.InfoAt(pos with(y++)).path_priority < 99;
-            };
-
-            ret.has_support = TileHasSupport(tile_pos);
-            for (size_t i = 1/*sic*/; i < segments.size(); i++)
-            {
-                if (TileHasSupport(segments[i]))
-                {
-                    ret.has_support = true;
-                    break;
-                }
-            }
-            ret.has_support = ret.has_support || TileHasSupport(tile_pos);
+                ret = map.InfoAt(tile_pos).path_priority;
 
             return ret;
         };
@@ -564,11 +582,11 @@ struct Worm
         // Refuse to go up without any support.
 
         // Stop if nowhere to go.
-        if (!max(p_fwd, p_left, p_right).valid)
+        if (max(p_fwd, p_left, p_right) <= 0)
             return ivec2();
 
         // If the current dir is at least as good as the alternatives, keep it.
-        if (p_fwd >= p_left && p_fwd >= p_right && (p_fwd.has_support || current_dir != ivec2(0,-1)))
+        if (p_fwd >= p_left && p_fwd >= p_right)
             return current_dir;
 
         // Pick the best of the two directions.
@@ -581,21 +599,59 @@ struct Worm
     void Tick(Map &map, ParticleController &par)
     {
         bool on_ground = false;
-        for (ivec2 seg : segments)
-        {
-            if (map.InfoAt(seg with(y++)).path_priority < 99)
+        std::vector<unsigned char> supported_segments(segments.size());
+        { // Check if the worm is supported by the ground.
+            std::optional<ivec2> prev_delta, next_delta;
+            for (size_t i = 0; i < segments.size(); i++) LOOP_NAME(ground)
             {
-                on_ground = true;
-                break;
+                if (map.InfoAt(segments[i] with(y++)).path_priority < 99)
+                {
+                    on_ground = true;
+                    supported_segments[i] = true;
+                    continue;
+                }
+
+                prev_delta = next_delta;
+                next_delta = i == segments.size() - 1 ? std::nullopt : std::optional{segments[i+1] - segments[i]};
+
+                for (std::optional<ivec2> *delta_ptr : {&prev_delta, &next_delta})
+                {
+                    if (!*delta_ptr)
+                        continue;
+                    for (int s : {-1, 1})
+                    {
+                        ivec2 offset = (*delta_ptr)->rot90(s);
+                        if (offset != ivec2(0,-1) && map.InfoAt(segments[i] + offset).path_priority < 99)
+                        {
+                            on_ground = true;
+                            supported_segments[i] = true;
+                            break;
+                        }
+                    }
+                    if (supported_segments[i])
+                        break;
+                }
             }
         }
+
         if (on_ground)
         {
+            if (fall_speed > 0.8)
+            {
+                Sounds::landing(0.2);
+                for (size_t i = 0; i < segments.size(); i++)
+                {
+                    if (supported_segments[i])
+                        par.EffectDirtMinor(segments[i] * tile_size + ivec2(tile_size / 2, tile_size), fvec2(tile_size, 0), 4);
+                }
+            }
             fall_offset = 0;
+            fall_speed = 0;
         }
         else
         {
-            fall_offset++;
+            clamp_var_max(fall_speed += 0.02, 1);
+            fall_offset += fall_speed;
             if (fall_offset >= tile_size)
             {
                 fall_offset = 0;
@@ -615,11 +671,13 @@ struct Worm
                 bool ok = true;
                 if (crawl_offset >= tile_size / 2 - 3)
                 {
-                    ivec2 chosen_dir = ChooseDirection(map);
-                    if (chosen_dir)
+                    bool at_exit = map.data.exit_pos == segments.back();
+                    ivec2 chosen_dir = at_exit ? ivec2() : ChooseDirection(map);
+
+                    if (chosen_dir || at_exit)
                     {
                         crawl_offset -= tile_size;
-                        segments.front() = segments.back() + ChooseDirection(map);
+                        segments.front() = segments.back() + chosen_dir;
                         std::rotate(segments.begin(), segments.begin() + 1, segments.end());
 
                         { // Destroy tiles.
@@ -758,6 +816,25 @@ struct World
     int speed_factor = 2;
     ivec2 camera_pos;
 
+    float fade_in = 1;
+    float fade_out = 0;
+
+    bool ShouldFadeOut() const
+    {
+        if (worm.dead)
+            return true; // Death.
+        if (!worm.segments.empty() && worm.segments.front() == map.data.exit_pos)
+            return true; // Win condition.
+        return false;
+    }
+
+    std::optional<int> ShouldChangeLevel()
+    {
+        if (ShouldFadeOut() && fade_out >= 1)
+            return worm.dead ? map.level_index : map.level_index + 1;
+        return {};
+    }
+
     void Tick()
     {
         // The logic affected by game speed.
@@ -785,11 +862,20 @@ struct World
         // Particles.
         par.Tick();
 
-        if (Controls::PausePressed())
-            running = !running;
+        { // Gui.
+            if (Controls::PausePressed())
+                running = !running;
 
-        if (Controls::ToggleSpeedPressed())
-            speed_factor = speed_factor > 1 ? 1 : 2;
+            if (Controls::ToggleSpeedPressed())
+                speed_factor = speed_factor > 1 ? 1 : 2;
+        }
+
+        { // Fade.
+            clamp_var_min(fade_in -= 0.035f);
+
+            if (ShouldFadeOut())
+                clamp_var_max(fade_out += 0.035f);
+        }
     }
 
     void Render() const
@@ -799,6 +885,10 @@ struct World
         par.Render(camera_pos, screen_size);
 
         r.itext(-screen_size/2, Graphics::Text(Fonts::main, FMT("{}, speed={}", running ? "Running" : "Paused", speed_factor))).align(ivec2(-1));
+
+        // Fade.
+        if (float fade = max(fade_in, fade_out); fade > 0)
+            r.iquad(ivec2(0), screen_size).center().color(fvec3(0)).alpha(fade);
 
         // Vignette.
         r.iquad(ivec2(0), atlas.vignette).center();
@@ -816,7 +906,8 @@ namespace States
 
         void LoadMap(int index)
         {
-            map_backup = Map(index);
+            if (map_backup.level_index != index)
+                map_backup = Map(index);
             ReloadCurrentMap();
         }
 
@@ -845,6 +936,9 @@ namespace States
             (void)next_state;
 
             w.Tick();
+
+            if (auto next_level = w.ShouldChangeLevel())
+                LoadMap(*next_level);
         }
 
         void Render() const override

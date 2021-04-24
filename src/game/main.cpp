@@ -9,7 +9,7 @@ static Audio::Context context = nullptr;
 Audio::SourceManager audio_manager;
 
 Graphics::ShaderConfig shader_config = Graphics::ShaderConfig::Core();
-static Interface::ImGuiController gui_controller(Poly::derived<Interface::ImGuiController::GraphicsBackend_Modern>, adjust_(Interface::ImGuiController::Config{}, shader_header = shader_config.common_header));
+static Interface::ImGuiController gui_controller(Poly::derived<Interface::ImGuiController::GraphicsBackend_Modern>, adjust_(Interface::ImGuiController::Config{}, shader_header = shader_config.common_header, store_state_in_file = ""));
 
 namespace Fonts
 {
