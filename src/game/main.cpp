@@ -5,6 +5,9 @@ constexpr Interface::FullscreenMode fullscreen_mode = Interface::borderless_full
 Interface::Window window(std::string(window_name), screen_size * 2, Interface::windowed, adjust_(Interface::WindowSettings{}, min_size = screen_size));
 static Graphics::DummyVertexArray dummy_vao = nullptr;
 
+static Audio::Context context = nullptr;
+Audio::SourceManager audio_manager;
+
 Graphics::ShaderConfig shader_config = Graphics::ShaderConfig::Core();
 static Interface::ImGuiController gui_controller(Poly::derived<Interface::ImGuiController::GraphicsBackend_Modern>, adjust_(Interface::ImGuiController::Config{}, shader_header = shader_config.common_header));
 
@@ -86,6 +89,7 @@ struct ProgramState : Program::DefaultBasicState
 
         gui_controller.PreTick();
         state_manager.Tick();
+        audio_manager.Tick();
     }
 
     void Render() override
@@ -111,6 +115,8 @@ struct ProgramState : Program::DefaultBasicState
         gui_controller.LoadFont("assets/CatIV15.ttf", 15.0f, adjust(ImFontConfig{}, FontBuilderFlags = monochrome_font_flags));
         gui_controller.LoadDefaultFont();
         gui_controller.RenderFontsWithFreetype();
+
+        Audio::LoadMentionedFiles(Audio::LoadFromPrefixWithExt("assets/sounds/"), Audio::mono, Audio::wav);
 
         Graphics::Blending::Enable();
         Graphics::Blending::FuncNormalPre();

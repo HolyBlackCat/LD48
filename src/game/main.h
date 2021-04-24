@@ -6,6 +6,8 @@ constexpr std::string_view window_name = "Ludum dare 48";
 extern Interface::Window window;
 extern Graphics::ShaderConfig shader_config;
 
+extern Audio::SourceManager audio_manager;
+
 namespace Fonts
 {
     namespace Files

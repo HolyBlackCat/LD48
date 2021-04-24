@@ -4,7 +4,7 @@
 
 SIMPLE_STRUCT( Atlas
     DECL(Graphics::TextureAtlas::Region)
-        worm, tiles
+        worm, tiles, vignette
 )
 static Atlas atlas;
 
@@ -45,126 +45,22 @@ namespace Draw
     }
 }
 
-struct Worm
+namespace Sounds
 {
-    std::vector<ivec2> segments; // This is sorted tail-to-head.
-    int crawl_offset = 0;
+    #define ADD_SOUND(name_, var_) \
+        Audio::Source &name_(fvec2 pos, float vol = 1, float pitch = 0) \
+        { \
+            return audio_manager.Add(Audio::File(#name_##_c))->pos(pos).volume(vol).pitch(pow(2, pitch + float(-var_ <= randomize.real() <= var_))).play(); \
+        } \
+        Audio::Source &name_(float vol = 1, float pitch = 0) \
+        { \
+            return audio_manager.Add(Audio::File(#name_##_c))->relative().volume(vol).pitch(pow(2, pitch + float(-var_ <= randomize.real() <= var_))).play(); \
+        } \
 
-    void Draw(ivec2 offset) const
-    {
-        std::optional<ivec2> prev_delta, next_delta;
-        for (size_t i = 0; i < segments.size(); i++)
-        {
-            prev_delta = next_delta;
-            next_delta = i == segments.size() - 1 ? std::nullopt : std::optional{segments[i+1] - segments[i]};
+    ADD_SOUND(dirt_breaks, 0.5)
 
-            Graphics::TextureAtlas::Region region = atlas.worm.region(ivec2(0), ivec2(tile_size));
-
-            ivec2 base_pos = offset + segments[i] * tile_size;
-
-            if (!prev_delta && !next_delta)
-            {
-                // This shouldn't happen, draw a placeholder.
-                r.iquad(base_pos, region);
-            }
-            else if (!prev_delta && next_delta)
-            {
-                // Tail.
-                if (next_delta == ivec2(1,0))
-                    region = region.region(ivec2(2,2) * tile_size, ivec2(tile_size));
-                else if (next_delta == ivec2(-1,0))
-                    region = region.region(ivec2(3,2) * tile_size, ivec2(tile_size));
-                else if (next_delta == ivec2(0,-1))
-                    region = region.region(ivec2(2,3) * tile_size, ivec2(tile_size));
-                else
-                    region = region.region(ivec2(3,3) * tile_size, ivec2(tile_size));
-
-                Graphics::TextureAtlas::Region straight_reg;
-                if (crawl_offset)
-                {
-                    if (next_delta->x != 0)
-                        straight_reg = atlas.worm.region(ivec2(0,0) * tile_size, ivec2(tile_size));
-                    else
-                        straight_reg = atlas.worm.region(ivec2(1,0) * tile_size, ivec2(tile_size));
-                }
-
-                Draw::ShiftedTile(base_pos, {region, nullptr, &straight_reg, (*next_delta < 0).any(), true}, *next_delta * crawl_offset);
-            }
-            else if (prev_delta && !next_delta)
-            {
-                // Head.
-                if (prev_delta == ivec2(-1,0))
-                    region = region.region(ivec2(0,1) * tile_size, ivec2(tile_size));
-                else if (prev_delta == ivec2(1,0))
-                    region = region.region(ivec2(1,1) * tile_size, ivec2(tile_size));
-                else if (prev_delta == ivec2(0,1))
-                    region = region.region(ivec2(0,2) * tile_size, ivec2(tile_size));
-                else
-                    region = region.region(ivec2(1,2) * tile_size, ivec2(tile_size));
-
-                Graphics::TextureAtlas::Region straight_reg;
-                if (crawl_offset)
-                {
-                    if (prev_delta->x != 0)
-                        straight_reg = atlas.worm.region(ivec2(0,0) * tile_size, ivec2(tile_size));
-                    else
-                        straight_reg = atlas.worm.region(ivec2(1,0) * tile_size, ivec2(tile_size));
-                }
-
-                Draw::ShiftedTile(base_pos, {region, &straight_reg, nullptr, (*prev_delta < 0).any(), true}, *prev_delta * crawl_offset);
-            }
-            else if (*prev_delta == *next_delta)
-            {
-                // Straight piece.
-                if (next_delta->x != 0)
-                    region = region.region(ivec2(0,0) * tile_size, ivec2(tile_size));
-                else
-                    region = region.region(ivec2(1,0) * tile_size, ivec2(tile_size));
-
-                Draw::ShiftedTile(base_pos, {region, i == 1 ? nullptr : &region, i == segments.size() - 2 ? nullptr : &region, (*prev_delta < 0).any() }, *next_delta * crawl_offset);
-            }
-            else
-            {
-                // Corner piece.
-                ivec2 delta = prev_delta->rot90() == *next_delta ? *prev_delta : -*next_delta;
-                if (delta == ivec2(0,-1))
-                    region = region.region(ivec2(2,0) * tile_size, ivec2(tile_size));
-                else if (delta == ivec2(1,0))
-                    region = region.region(ivec2(3,0) * tile_size, ivec2(tile_size));
-                else if (delta == ivec2(-1,0))
-                    region = region.region(ivec2(2,1) * tile_size, ivec2(tile_size));
-                else
-                    region = region.region(ivec2(3,1) * tile_size, ivec2(tile_size));
-                r.iquad(base_pos, region);
-            }
-        }
-        std::cout << '\n';
-    }
-
-    ivec2 ChooseDirection() const
-    {
-        return ivec2(Input::Button(Input::d).down() - Input::Button(Input::a).down(), Input::Button(Input::s).down() - Input::Button(Input::w).down());
-    }
-
-    void Crawl(int delta)
-    {
-        if (segments.size() < 2)
-            return;
-
-
-        // We crawl pixel by pixel, just in case.
-        while (delta-- > 0)
-        {
-            crawl_offset++;
-            if (crawl_offset >= tile_size / 2)
-            {
-                crawl_offset -= tile_size;
-                segments.front() = segments.back() + ChooseDirection();
-                std::rotate(segments.begin(), segments.begin() + 1, segments.end());
-            }
-        }
-    }
-};
+    #undef ADD_SOUND
+}
 
 struct Particle
 {
@@ -257,7 +153,7 @@ struct Particle
             Refl::Class::Member<i>(params) = range.Calc(time, [](const Params *p){return Refl::Class::Member<i>(*p);});
         });
 
-        r.fquad(pos, fvec2(params.size)).center().color(params.color).alpha(params.alpha).beta(params.beta);
+        r.fquad(rel_pos, fvec2(params.size)).center().color(params.color).alpha(params.alpha).beta(params.beta);
     }
 };
 
@@ -311,6 +207,40 @@ struct ParticleController
     }
 };
 
+namespace MapPoints
+{
+    struct State
+    {
+        bool worm_placed = false;
+        ivec2 worm_starting_pos{};
+        ivec2 worm_starting_dir{};
+        int worm_starting_len = 4;
+    };
+
+    STRUCT( Base POLYMORPHIC )
+    {
+        UNNAMED_MEMBERS()
+        virtual void Process(State &state, ivec2 tile_pos) = 0;
+    };
+
+    STRUCT( Worm EXTENDS Base )
+    {
+        MEMBERS(
+            DECL(int) len
+            DECL(ivec2) dir
+        )
+
+        void Process(State &state, ivec2 tile_pos) override
+        {
+            if (state.worm_placed)
+                Program::Error("More than one worm.");
+            state.worm_starting_pos = tile_pos;
+            state.worm_starting_dir = dir;
+            state.worm_starting_len = len;
+        }
+    };
+}
+
 class Map
 {
   public:
@@ -320,6 +250,7 @@ class Map
         air,
         dirt,
         pipe,
+        wall,
         _count,
     };
 
@@ -327,38 +258,51 @@ class Map
 
     struct TileInfo
     {
-        bool solid = true;
         TileRenderer renderer{};
         int tile_index = -1;
+        bool breakable = true;
+        int path_priority = 0; // Worm prefers tiles with a higher value. 0 means it will refuse to go there.
     };
 
     // Tile properties table.
     inline static const TileInfo tile_info[] =
     {
-        /* air  */ {.solid = false, .renderer = TileRenderer::simple, .tile_index = -1},
-        /* dirt */ {.solid =  true, .renderer = TileRenderer::fancy , .tile_index =  0},
-        /* pipe */ {.solid =  true, .renderer = TileRenderer::pipe  , .tile_index =  1},
+        /* air  */ {.renderer = TileRenderer::simple, .tile_index = -1, .breakable = false, .path_priority = 99},
+        /* dirt */ {.renderer = TileRenderer::fancy , .tile_index =  0, .breakable = true , .path_priority =  9},
+        /* pipe */ {.renderer = TileRenderer::pipe  , .tile_index =  1, .breakable = false, .path_priority =  0},
+        /* wall */ {.renderer = TileRenderer::pipe  , .tile_index =  2, .breakable = false, .path_priority =  0},
     };
     static_assert(std::size(tile_info) == size_t(Tile::_count));
+
+    static const TileInfo &Info(Tile tile)
+    {
+        ASSERT(int(tile) < int(Tile::_count), "Tile index is out of range.");
+        return tile_info[int(tile)];
+    }
 
     // Tile merging rules.
     static bool ShouldMergeWith(Tile a, Tile b)
     {
         if (a == b)
             return true;
+        if (a == Tile::dirt && b == Tile::wall)
+            return true;
         return false;
     }
-
 
     struct TileData
     {
         Tile type = Tile::air;
     };
 
+    uint64_t global_time = 0;
+
     Array2D<TileData> tiles;
     int level_index = -1;
 
     Array2D<uint8_t> noise;
+
+    MapPoints::State data;
 
     inline static std::string map_prefix = "assets/levels/";
 
@@ -392,6 +336,8 @@ class Map
                 Program::Error("Map index is out of range.");
 
             Json json(Stream::ReadOnlyData::file(FMT("{}{}.json", map_prefix, new_level_index+1)).string(), 32);
+
+            // Parse tiles.
             Array2D<int> layer_mid = Tiled::LoadTileLayer(Tiled::FindLayer(json.GetView(), "mid"));
             tiles = decltype(tiles)(layer_mid.size());
             noise = decltype(noise)(layer_mid.size());
@@ -405,6 +351,14 @@ class Map
                 tiles.safe_nonthrowing_at(pos) = new_data;
                 noise.safe_nonthrowing_at(pos) = randomize.integer<decltype(noise)::type>();
             }
+
+            // Parse points.
+            Tiled::PointLayer points = Tiled::LoadPointLayer(Tiled::FindLayer(json.GetView(), "obj"));
+            for (const auto &[name, pos] : points.points)
+            {
+                ivec2 tile_pos = div_ex(iround(pos), tile_size);
+                Refl::FromString<Refl::PolyStorage<MapPoints::Base>>(name)->Process(data, tile_pos);
+            }
         }
         catch (std::exception &e)
         {
@@ -412,9 +366,16 @@ class Map
         }
     }
 
-    const TileData &At(ivec2 pos) const
+    MAYBE_CONST(
+        CV TileData &At(ivec2 pos) CV
+        {
+            return tiles.clamped_at(pos);
+        }
+    )
+
+    const TileInfo &InfoAt(ivec2 pos) const
     {
-        return tiles.clamped_at(pos);
+        return Info(At(pos).type);
     }
 
     decltype(noise)::type Noise(ivec2 pos) const
@@ -455,27 +416,31 @@ class Map
                         }
                     }
 
+                    Graphics::TextureAtlas::Region base_region = atlas.tiles.region(ivec2(1, 2 * info.tile_index) * tile_size, ivec2(tile_size));
+
+                    if (merge_full)
+                    {
+                        int variants[] = {0,0,0,0,0,1,1,1,2,3};
+                        int var = variants[Noise(tile_pos) % std::size(variants)];
+                        base_region.pos += bvec2(var & 1, var & 2) * tile_size;
+                        r.iquad(pixel_pos, base_region);
+                        break;
+                    }
+
                     auto corner = [&](ivec2 sub)
                     {
                         ivec2 tile_offset = sub * 2 - 1;
                         ivec2 pixel_offset = sub * (tile_size / 2);
 
-                        bool merge_h = merge_full || ShouldMergeWith(type, At(tile_pos + tile_offset with(y = 0)).type);
-                        bool merge_v = merge_full || ShouldMergeWith(type, At(tile_pos + tile_offset with(x = 0)).type);
-                        bool merge_d = merge_full || ShouldMergeWith(type, At(tile_pos + tile_offset            ).type);
+                        bool merge_h = ShouldMergeWith(type, At(tile_pos + tile_offset with(y = 0)).type);
+                        bool merge_v = ShouldMergeWith(type, At(tile_pos + tile_offset with(x = 0)).type);
+                        bool merge_d = ShouldMergeWith(type, At(tile_pos + tile_offset            ).type);
 
-                        Graphics::TextureAtlas::Region base_region = atlas.tiles.region(ivec2(1, 2 * info.tile_index) * tile_size, ivec2(tile_size));
                         Graphics::TextureAtlas::Region region;
 
                         if (merge_h && merge_v && merge_d)
                         {
                             region = base_region;
-                            if (merge_full)
-                            {
-                                int variants[] = {0,0,0,0,0,1,1,1,2,3};
-                                int var = variants[Noise(tile_pos) % std::size(variants)];
-                                region.pos += bvec2(var & 1, var & 2) * tile_size;
-                            }
                         }
                         else if (merge_h && merge_v)
                         {
@@ -497,8 +462,10 @@ class Map
                         r.iquad(pixel_pos + pixel_offset, region.region(pixel_offset, ivec2(tile_size / 2)));
                     };
 
-                    for (ivec2 sub : vector_range(ivec2(2)))
-                        corner(sub);
+                    corner(ivec2(0,0));
+                    corner(ivec2(0,1));
+                    corner(ivec2(1,0));
+                    corner(ivec2(1,1));
                 }
                 break;
               case TileRenderer::pipe:
@@ -527,11 +494,314 @@ class Map
                         variant = ivec2(4, 1);
                     else if (merge == 0b1001)
                         variant = ivec2(3, 1);
+                    else
+                        variant = ivec2(5, 0);
                     r.iquad(pixel_pos, atlas.tiles.region((ivec2(1, 2 * info.tile_index) + variant) * tile_size, ivec2(tile_size)));
                 }
                 break;
             }
         }
+    }
+};
+
+struct Worm
+{
+    std::vector<ivec2> segments; // This is sorted tail-to-head.
+    int crawl_offset = 0;
+    int fall_offset = 0;
+
+    ivec2 ChooseDirection(const Map &map) const
+    {
+        if (segments.size() < 2)
+            return ivec2();
+        ivec2 head = segments.back();
+        ivec2 pre_head = segments[segments.size() - 2];
+        ivec2 current_dir = head - pre_head;
+        if (!current_dir)
+            current_dir = map.data.worm_starting_dir;
+
+        struct Priority
+        {
+            bool valid = true;
+            bool has_support = true;
+            int tile_priority = 0;
+            auto operator<=>(const Priority &) const = default;
+        };
+        auto GetPathPriority = [&](ivec2 tile_pos) -> Priority
+        {
+            Priority ret;
+
+            if (std::find(segments.begin(), segments.end(), tile_pos) != segments.end())
+                ret.tile_priority = 0;
+            else
+                ret.tile_priority = map.InfoAt(tile_pos).path_priority;
+
+            ret.valid = ret.tile_priority > 0;
+
+            auto TileHasSupport = [&](ivec2 pos)
+            {
+                return map.InfoAt(pos with(y++)).path_priority < 99;
+            };
+
+            ret.has_support = TileHasSupport(tile_pos);
+            for (size_t i = 1/*sic*/; i < segments.size(); i++)
+            {
+                if (TileHasSupport(segments[i]))
+                {
+                    ret.has_support = true;
+                    break;
+                }
+            }
+            ret.has_support = ret.has_support || TileHasSupport(tile_pos);
+
+            return ret;
+        };
+
+        auto p_fwd = GetPathPriority(segments.back() + current_dir);
+        auto p_left = GetPathPriority(segments.back() + current_dir.rot90(-1));
+        auto p_right = GetPathPriority(segments.back() + current_dir.rot90(1));
+
+        // Refuse to go up without any support.
+
+        // Stop if nowhere to go.
+        if (!max(p_fwd, p_left, p_right).valid)
+            return ivec2();
+
+        // If the current dir is at least as good as the alternatives, keep it.
+        if (p_fwd >= p_left && p_fwd >= p_right && (p_fwd.has_support || current_dir != ivec2(0,-1)))
+            return current_dir;
+
+        // Pick the best of the two directions.
+        if (p_left > p_right)
+            return current_dir.rot90(-1);
+        else
+            return current_dir.rot90(1);
+    }
+
+    void Tick(Map &map, ParticleController &par)
+    {
+        bool on_ground = false;
+        for (ivec2 seg : segments)
+        {
+            if (map.InfoAt(seg with(y++)).path_priority < 99)
+            {
+                on_ground = true;
+                break;
+            }
+        }
+        if (on_ground)
+        {
+            fall_offset = 0;
+        }
+        else
+        {
+            fall_offset++;
+            if (fall_offset >= tile_size)
+            {
+                fall_offset = 0;
+                for (ivec2 &seg : segments)
+                    seg.y++;
+            }
+        }
+
+        // Crawl.
+        if (on_ground && segments.size() >= 2)
+        {
+            int crawl_dist = map.global_time % 2;
+
+            // We crawl pixel by pixel, just in case.
+            while (crawl_dist-- > 0)
+            {
+                bool ok = true;
+                if (crawl_offset >= tile_size / 2 - 3)
+                {
+                    ivec2 chosen_dir = ChooseDirection(map);
+                    if (chosen_dir)
+                    {
+                        crawl_offset -= tile_size;
+                        segments.front() = segments.back() + ChooseDirection(map);
+                        std::rotate(segments.begin(), segments.begin() + 1, segments.end());
+
+                        { // Destroy tiles.
+                            if (map.InfoAt(segments.back()).breakable)
+                            {
+                                map.At(segments.back()).type = Map::Tile::air;
+                                ivec2 pixel_pos = segments.back() * tile_size + tile_size / 2;
+                                par.EffectDirtDestroyed(pixel_pos, fvec2(tile_size));
+                                Sounds::dirt_breaks(pixel_pos, 0.5);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        ok = false;
+                    }
+                }
+                if (ok)
+                    crawl_offset++;
+            }
+        }
+    }
+
+    void Draw(ivec2 camera_pos) const
+    {
+        std::optional<ivec2> prev_delta, next_delta;
+        for (size_t i = 0; i < segments.size(); i++)
+        {
+            prev_delta = next_delta;
+            next_delta = i == segments.size() - 1 ? std::nullopt : std::optional{segments[i+1] - segments[i]};
+
+            Graphics::TextureAtlas::Region region = atlas.worm.region(ivec2(0), ivec2(tile_size));
+
+            ivec2 base_pos = segments[i] * tile_size - camera_pos + ivec2(0, fall_offset);
+
+            if ((prev_delta && !*prev_delta) || (next_delta && !*next_delta))
+                continue;
+
+            if (!prev_delta && !next_delta)
+            {
+                // This shouldn't happen, draw a placeholder.
+                r.iquad(base_pos, region);
+            }
+            else if (!prev_delta && next_delta)
+            {
+                // Tail.
+                if (next_delta == ivec2(1,0))
+                    region = region.region(ivec2(2,2) * tile_size, ivec2(tile_size));
+                else if (next_delta == ivec2(-1,0))
+                    region = region.region(ivec2(3,2) * tile_size, ivec2(tile_size));
+                else if (next_delta == ivec2(0,-1))
+                    region = region.region(ivec2(2,3) * tile_size, ivec2(tile_size));
+                else
+                    region = region.region(ivec2(3,3) * tile_size, ivec2(tile_size));
+
+                Graphics::TextureAtlas::Region straight_reg;
+                if (crawl_offset)
+                {
+                    if (next_delta->x != 0)
+                        straight_reg = atlas.worm.region(ivec2(0,0) * tile_size, ivec2(tile_size));
+                    else
+                        straight_reg = atlas.worm.region(ivec2(1,0) * tile_size, ivec2(tile_size));
+                }
+
+                Draw::ShiftedTile(base_pos, {region, nullptr, &straight_reg, (*next_delta < 0).any(), true}, *next_delta * crawl_offset);
+            }
+            else if (prev_delta && !next_delta)
+            {
+                // Head.
+                if (prev_delta == ivec2(-1,0))
+                    region = region.region(ivec2(0,1) * tile_size, ivec2(tile_size));
+                else if (prev_delta == ivec2(1,0))
+                    region = region.region(ivec2(1,1) * tile_size, ivec2(tile_size));
+                else if (prev_delta == ivec2(0,1))
+                    region = region.region(ivec2(0,2) * tile_size, ivec2(tile_size));
+                else
+                    region = region.region(ivec2(1,2) * tile_size, ivec2(tile_size));
+
+                Graphics::TextureAtlas::Region straight_reg;
+                if (crawl_offset)
+                {
+                    if (prev_delta->x != 0)
+                        straight_reg = atlas.worm.region(ivec2(0,0) * tile_size, ivec2(tile_size));
+                    else
+                        straight_reg = atlas.worm.region(ivec2(1,0) * tile_size, ivec2(tile_size));
+                }
+
+                Draw::ShiftedTile(base_pos, {region, &straight_reg, nullptr, (*prev_delta < 0).any(), true}, *prev_delta * crawl_offset);
+            }
+            else if (*prev_delta == *next_delta)
+            {
+                // Straight piece.
+                if (next_delta->x != 0)
+                    region = region.region(ivec2(0,0) * tile_size, ivec2(tile_size));
+                else
+                    region = region.region(ivec2(1,0) * tile_size, ivec2(tile_size));
+
+                Draw::ShiftedTile(base_pos, {region, i == 1 ? nullptr : &region, i == segments.size() - 2 ? nullptr : &region, (*prev_delta < 0).any() }, *next_delta * crawl_offset);
+            }
+            else
+            {
+                // Corner piece.
+                ivec2 delta = prev_delta->rot90() == *next_delta ? *prev_delta : -*next_delta;
+                if (delta == ivec2(0,-1))
+                    region = region.region(ivec2(2,0) * tile_size, ivec2(tile_size));
+                else if (delta == ivec2(1,0))
+                    region = region.region(ivec2(3,0) * tile_size, ivec2(tile_size));
+                else if (delta == ivec2(-1,0))
+                    region = region.region(ivec2(2,1) * tile_size, ivec2(tile_size));
+                else
+                    region = region.region(ivec2(3,1) * tile_size, ivec2(tile_size));
+                r.iquad(base_pos, region);
+            }
+        }
+    }
+};
+
+namespace Controls
+{
+    bool PausePressed()
+    {
+        return mouse.right.pressed() || Input::Button(Input::space).pressed();
+    }
+    bool ToggleSpeedPressed()
+    {
+        return Input::Button(Input::tab).pressed();
+    }
+}
+
+struct World
+{
+    Worm worm;
+    Map map;
+    ParticleController par;
+    bool running = false;
+    int speed_factor = 2;
+    ivec2 camera_pos;
+
+    void Tick()
+    {
+        // The logic affected by game speed.
+        for (int i = 0; i < speed_factor; i++)
+        {
+            { // Worm
+                if (running)
+                    worm.Tick(map, par);
+            }
+
+            // Camera pos.
+            camera_pos = map.tiles.size() * tile_size / 2;
+
+            { // Listener pos.
+                int separation = screen_size.x * 2;
+                Audio::ListenerPosition(camera_pos.to_vec3(-separation));
+                Audio::ListenerOrientation(fvec3(0,0,1), fvec3(0,-1,0));
+                Audio::Source::DefaultRefDistance(separation);
+            }
+
+            // Global timer.
+            map.global_time++;
+        }
+
+        // Particles.
+        par.Tick();
+
+        if (Controls::PausePressed())
+            running = !running;
+
+        if (Controls::ToggleSpeedPressed())
+            speed_factor = speed_factor > 1 ? 1 : 2;
+    }
+
+    void Render() const
+    {
+        worm.Draw(camera_pos);
+        map.render(camera_pos, screen_size);
+        par.Render(camera_pos, screen_size);
+
+        r.itext(-screen_size/2, Graphics::Text(Fonts::main, FMT("{}, speed={}", running ? "Running" : "Paused", speed_factor))).align(ivec2(-1));
+
+        // Vignette.
+        r.iquad(ivec2(0), atlas.vignette).center();
     }
 };
 
@@ -541,16 +811,22 @@ namespace States
     {
         UNNAMED_MEMBERS()
 
-        Worm worm;
+        World w;
+        Map map_backup;
 
-        Input::Button b_up = Input::up;
-        Input::Button b_down = Input::down;
-        Input::Button b_left = Input::left;
-        Input::Button b_right = Input::right;
+        void LoadMap(int index)
+        {
+            map_backup = Map(index);
+            ReloadCurrentMap();
+        }
 
-        Map map;
-
-        ParticleController par;
+        void ReloadCurrentMap()
+        {
+            w = World{};
+            w.map = map_backup;
+            for (int i = 0; i < w.map.data.worm_starting_len; i++)
+                w.worm.segments.push_back(w.map.data.worm_starting_pos);
+        }
 
         Game()
         {
@@ -561,32 +837,14 @@ namespace States
                 texture_atlas.InitRegions(atlas, ".png");
             }
 
-            Refl::FromString(worm.segments, "[(0,0),(1,0),(2,0),(3,0),(4,0),(5,0),(5,-1),(5,-2),(5,-3),(5,-4),(4,-4),(3,-4),(2,-4),(1,-4),(0,-4),(-1,-4),(-2,-4),(-3,-4),(-4,-4),(-5,-4),(-5,-3),(-5,-2),(-5,-1),(-5,0),(-5,1),(-5,2),(-5,3),(-4,3),(-3,3),(-2,3),(-1,3),(0,3),(1,3),(2,3),(3,3),(4,3),(5,3),(6,3),(7,3),(8,3),(9,3),(9,2),(9,1),(9,0),(9,-1),(9,-2),(9,-3),(9,-4),(10,-4),(11,-4),(12,-4),(13,-4),(14,-4),(15,-4),(16,-4),(17,-4),(18,-4),(19,-4),(20,-4),(20,-3),(20,-2),(20,-1),(20,0),(20,1),(20,2),(20,3),(20,4),(19,4),(18,4),(17,4),(16,4),(15,4),(14,4),(13,4),(12,4),(12,3),(12,2),(12,1),(12,0),(12,-1),(13,-1),(14,-1),(15,-1),(16,-1),(17,-1)]");
-
-            map = Map(0);
+            LoadMap(0);
         }
 
         void Tick(const GameUtils::State::NextStateSelector &next_state) override
         {
             (void)next_state;
 
-            { // Worm
-                ivec2 dir(b_right.repeated() - b_left.repeated(), b_down.repeated() - b_up.repeated());
-                if (abs(dir.x) != abs(dir.y))
-                    worm.segments.push_back(worm.segments.empty() ? ivec2(0,0) : worm.segments.back() + dir);
-
-                worm.crawl_offset += Input::Button(Input::mouse_wheel_up).pressed() - Input::Button(Input::mouse_wheel_down).pressed();
-
-                if (Input::Button(Input::space).down())
-                    worm.Crawl(1);
-            }
-
-            { // Particles
-                par.Tick();
-
-                if (mouse.left.released())
-                    par.EffectDirtDestroyed(mouse.pos(), fvec2(16));
-            }
+            w.Tick();
         }
 
         void Render() const override
@@ -596,14 +854,7 @@ namespace States
 
             r.BindShader();
 
-            worm.Draw(mouse.pos());
-
-            r.itext(-screen_size / 2, Graphics::Text(Fonts::main, STR((worm.crawl_offset)))).align(ivec2(-1));
-
-            ivec2 camera_pos = mouse.pos();
-
-            map.render(camera_pos, screen_size);
-            par.Render(camera_pos, screen_size);
+            w.Render();
 
             r.Finish();
         }
