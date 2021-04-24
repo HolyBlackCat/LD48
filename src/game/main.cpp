@@ -37,6 +37,8 @@ Render r = adjust_(Render(0x2000, shader_config), SetTexture(texture_main), SetM
 
 Input::Mouse mouse;
 
+Random<> randomize(std::random_device{}());
+
 struct ProgramState : Program::DefaultBasicState
 {
     GameUtils::State::StateManager state_manager;

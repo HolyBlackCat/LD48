@@ -23,3 +23,5 @@ extern AdaptiveViewport adaptive_viewport;
 extern Render r;
 
 extern Input::Mouse mouse;
+
+extern Random<> randomize;
