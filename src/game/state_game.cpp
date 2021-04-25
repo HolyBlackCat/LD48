@@ -179,6 +179,8 @@ namespace Gui
         std::optional<int> subscript;
         virtual bool IsBlocked() const {return force_blocked || (subscript && *subscript <= 0);}
 
+        Input::Button hotkey;
+
         Button() {}
         Button(int icon_index, std::string tooltip) : icon_index(icon_index), tooltip(std::move(tooltip)) {}
 
@@ -210,6 +212,8 @@ namespace Gui
         {
             if (IsBlocked())
                 return false;
+            if (hotkey.pressed())
+                return true;
             return mouse.left.released() && IsHovered();
         }
 
@@ -778,6 +782,7 @@ class Map
         wall,
         spike,
         bait,
+        floating_spike,
         _count,
     };
 
@@ -796,12 +801,13 @@ class Map
     // Tile properties table.
     inline static const TileInfo tile_info[] =
     {
-        /* air   */ {.renderer = TileRenderer::simple, .tile_index = -1, .breakable = false, .path_priority = 99, .kills = false, .bombable = false},
-        /* dirt  */ {.renderer = TileRenderer::fancy , .tile_index =  0, .breakable = true , .path_priority =  9, .kills = false, .bombable = true },
-        /* pipe  */ {.renderer = TileRenderer::pipe  , .tile_index =  1, .breakable = false, .path_priority =  0, .kills = false, .bombable = false},
-        /* wall  */ {.renderer = TileRenderer::pipe  , .tile_index =  2, .breakable = false, .path_priority =  0, .kills = false, .bombable = true },
-        /* spike */ {.renderer = TileRenderer::pipe  , .tile_index =  3, .breakable = false, .path_priority =  9, .kills = true , .bombable = true },
-        /* bait  */ {.renderer = TileRenderer::simple, .tile_index =  0, .breakable = true , .path_priority = 99, .kills = false, .bombable = true },
+        /* air      */ {.renderer = TileRenderer::simple, .tile_index = -1, .breakable = false, .path_priority = 99, .kills = false, .bombable = false},
+        /* dirt     */ {.renderer = TileRenderer::fancy , .tile_index =  0, .breakable = true , .path_priority =  9, .kills = false, .bombable = true },
+        /* pipe     */ {.renderer = TileRenderer::pipe  , .tile_index =  1, .breakable = false, .path_priority =  0, .kills = false, .bombable = false},
+        /* wall     */ {.renderer = TileRenderer::pipe  , .tile_index =  2, .breakable = false, .path_priority =  0, .kills = false, .bombable = true },
+        /* spike    */ {.renderer = TileRenderer::pipe  , .tile_index =  3, .breakable = false, .path_priority =  9, .kills = true , .bombable = true },
+        /* bait     */ {.renderer = TileRenderer::simple, .tile_index =  0, .breakable = true , .path_priority = 99, .kills = false, .bombable = true },
+        /* fl_spike */ {.renderer = TileRenderer::pipe  , .tile_index =  3, .breakable = false, .path_priority =  9, .kills = true , .bombable = true },
     };
     static_assert(std::size(tile_info) == size_t(Tile::_count));
 
@@ -816,6 +822,8 @@ class Map
     {
         if (a == Tile::spike)
             return b != Tile::spike && b != Tile::air;
+        if (a == Tile::floating_spike)
+            return b != Tile::air;
 
         if (a == b)
             return true;
@@ -1116,7 +1124,7 @@ struct Worm
             if (is_tile_banned && is_tile_banned(tile_pos))
                 ret = 0; // Refuse to touch your own body.
             else if (tile_pos == map.data.exit_pos && tile_pos - pos == -map.data.exit_dir)
-                ret = 98; // Go the exit if possible.
+                ret = current_dir == -map.data.exit_dir ? 99 : 98; // Go the exit if in doubt.
             else
                 ret = map.InfoAt(tile_pos).path_priority;
 
@@ -1457,7 +1465,7 @@ struct Bug
 
     ivec2 ChooseDirection(const Map &map) const
     {
-        return Worm::ChooseDirectionLow(map, tile_pos, dir, [&](ivec2 pos){return map.InfoAt(pos).path_priority < 99 && map.At(pos).type != Map::Tile::spike;}, true, true);
+        return Worm::ChooseDirectionLow(map, tile_pos, dir, [&](ivec2 pos){return map.InfoAt(pos).path_priority < 99 && !map.InfoAt(pos).kills;}, true, true);
     }
 
     void Tick(Map &map, ParticleController &par)
@@ -1546,13 +1554,25 @@ struct World
     inline static Gui::ButtonList buttons_game_control = Gui::ButtonList(-screen_size.x / 2, -1, {&button_restart, &checkbox_halfspeed, &checkbox_pause});
 
     inline static Gui::RadioButtonList radiobuttons_tools;
-    inline static Gui::RadioButton button_add_dirt = {6, radiobuttons_tools, "Create dirt"};
-    inline static Gui::RadioButton button_add_bait = {8, radiobuttons_tools, "Create bait"};
-    inline static Gui::RadioButton button_bomb = {5, radiobuttons_tools, "Destroy object"};
-    inline static Gui::Button button_reverse = {7, "Reverse"};
+    inline static Gui::RadioButton button_add_dirt = {6, radiobuttons_tools, "[1] Create dirt"};
+    inline static Gui::RadioButton button_add_bait = {8, radiobuttons_tools, "[2] Create bait"};
+    inline static Gui::Button button_reverse = {7, "[3] Reverse"};
+    inline static Gui::RadioButton button_bomb = {5, radiobuttons_tools, "[4] Destroy object"};
     inline static Gui::ButtonList buttons_tools = Gui::ButtonList(screen_size.x / 2, 1, {&button_add_dirt, &button_add_bait, &button_reverse, &button_bomb});
 
     inline static const std::vector<Gui::ButtonList *> buttonlists = {&buttons_game_control, &buttons_tools};
+
+    World()
+    {
+        button_restart.hotkey = Input::r;
+        checkbox_pause.hotkey = Input::space;
+        checkbox_halfspeed.hotkey = Input::tab;
+
+        button_add_dirt.hotkey = Input::_1;
+        button_add_bait.hotkey = Input::_2;
+        button_reverse.hotkey = Input::_3;
+        button_bomb.hotkey = Input::_4;
+    }
 
     bool ShouldFadeOut() const
     {
@@ -1654,16 +1674,6 @@ struct World
             }
 
             { // Extra keyboard and mouse controls.
-                // Restart from keyboard.
-                if (Input::Button(Input::r).pressed())
-                    button_restart.was_clicked = true;
-                // Pause from keyboard.
-                if (Input::Button(Input::space).pressed())
-                    checkbox_pause.enabled = !checkbox_pause.enabled;
-                // Toggle speed from keyboard.
-                if (Input::Button(Input::tab).pressed())
-                    checkbox_halfspeed.enabled = !checkbox_halfspeed.enabled;
-
                 // Unselect tool.
                 if (mouse.right.pressed())
                 {
@@ -1779,6 +1789,8 @@ struct World
                 {
                     // Add dirt.
                     hovered_tile_valid = map.At(*hovered_tile_pos).type == Map::Tile::air;
+                    if (hovered_tile_valid && std::any_of(worm.segments.begin(), worm.segments.end(), [&](ivec2 seg){return seg == *hovered_tile_pos;}))
+                        hovered_tile_valid = false;
                     if (hovered_tile_valid && mouse.left.pressed())
                     {
                         map.At(*hovered_tile_pos).type = Map::Tile::dirt;
@@ -1793,6 +1805,8 @@ struct World
                 {
                     // Add bait.
                     hovered_tile_valid = map.At(*hovered_tile_pos).type == Map::Tile::air;
+                    if (hovered_tile_valid && std::any_of(worm.segments.begin(), worm.segments.end(), [&](ivec2 seg){return seg == *hovered_tile_pos;}))
+                        hovered_tile_valid = false;
                     if (hovered_tile_valid && mouse.left.pressed())
                     {
                         map.At(*hovered_tile_pos).type = Map::Tile::bait;
