@@ -5,7 +5,7 @@
 
 SIMPLE_STRUCT( Atlas
     DECL(Graphics::TextureAtlas::Region)
-        worm, tiles, vignette, panel, button, button_icons, button_subscripts, cursor, mouse_pointer
+        worm, tiles, vignette, panel, button, button_icons, button_subscripts, cursor, mouse_pointer, bug
 )
 static Atlas atlas;
 
@@ -90,9 +90,11 @@ namespace Sounds
     ADD_SOUND(landing, 0.2)
     ADD_SOUND(click, 0.03)
     ADD_SOUND(player_dies, 0.1)
+    ADD_SOUND(bug_dies, 0.3)
     ADD_SOUND(explosion, 0.2)
     ADD_SOUND(reverse, 0.2)
     ADD_SOUND(bait, 0.2)
+    ADD_SOUND(next_level, 0.2)
 
     #undef ADD_SOUND
 }
@@ -542,8 +544,20 @@ struct ParticleController
         {
             particles.push_back(ParticleBlood(
                 center_pos + fvec2(-area.x/2 <= randomize.real() <= area.x/2, -area.y/2 <= randomize.real() <= area.y/2),
+                fvec2::dir(randomize.angle(), 0 <= randomize.real() <= 1.3),
+                2, 12, 40 <= randomize.integer() <= 70)
+            );
+        }
+    }
+
+    void EffectBloodExplosionMinor(fvec2 center_pos, fvec2 area, int n = 5)
+    {
+        while (n-- > 0)
+        {
+            particles.push_back(ParticleBlood(
+                center_pos + fvec2(-area.x/2 <= randomize.real() <= area.x/2, -area.y/2 <= randomize.real() <= area.y/2),
                 fvec2::dir(randomize.angle(), 0 <= randomize.real() <= 2),
-                2, 16, 45 <= randomize.integer() <= 90)
+                2, 8, 15 <= randomize.integer() <= 45)
             );
         }
     }
@@ -580,6 +594,20 @@ struct ParticleController
 
 namespace MapPoints
 {
+    struct BugSpawn
+    {
+        ivec2 pos{}, dir{};
+    };
+
+    ENUM( Direction,
+        (right)(down)(left)(up)
+    )
+
+    ivec2 DirFromEnum(Direction value)
+    {
+        return ivec2::dir4(int(value));
+    }
+
     struct State
     {
         bool worm_placed = false;
@@ -592,6 +620,8 @@ namespace MapPoints
         bool exit_placed = false;
         ivec2 exit_pos{};
         ivec2 exit_dir{};
+
+        std::vector<BugSpawn> bug_spawns;
 
         int num_dirt = 0;
         int num_bait = 0;
@@ -610,7 +640,7 @@ namespace MapPoints
         MEMBERS(
             DECL(std::string ATTR Refl::Optional) name
             DECL(int) len
-            DECL(ivec2) dir
+            DECL(Direction) dir
             DECL(int INIT=0 ATTR Refl::Optional) dirt
             DECL(int INIT=0 ATTR Refl::Optional) bait
             DECL(int INIT=0 ATTR Refl::Optional) bombs
@@ -626,7 +656,7 @@ namespace MapPoints
             state.level_name = name;
 
             state.worm_starting_pos = tile_pos;
-            state.worm_starting_dir = dir;
+            state.worm_starting_dir = DirFromEnum(dir);
             state.worm_starting_len = len;
             state.num_dirt = dirt;
             state.num_bait = bait;
@@ -638,7 +668,7 @@ namespace MapPoints
     STRUCT( Exit EXTENDS Base )
     {
         MEMBERS(
-            DECL(ivec2) dir
+            DECL(Direction) dir
         )
 
         void Process(State &state, ivec2 tile_pos) override
@@ -648,7 +678,19 @@ namespace MapPoints
             state.exit_placed = true;
 
             state.exit_pos = tile_pos;
-            state.exit_dir = dir;
+            state.exit_dir = DirFromEnum(dir);
+        }
+    };
+
+    STRUCT( Bug EXTENDS Base )
+    {
+        MEMBERS(
+            DECL(Direction) dir
+        )
+
+        void Process(State &state, ivec2 tile_pos) override
+        {
+            state.bug_spawns.push_back({tile_pos, DirFromEnum(dir)});
         }
     };
 }
@@ -803,6 +845,11 @@ class Map
     decltype(noise)::type Noise(ivec2 pos) const
     {
         return noise.safe_nonthrowing_at(mod_ex(pos, noise.size()));
+    }
+
+    bool TilePosIsAtBorder(ivec2 pos) const
+    {
+        return (pos - 1 < 0).any() || (pos + 1 >= tiles.size()).any();
     }
 
     void render(ivec2 viewport_center, ivec2 viewport_size) const
@@ -980,6 +1027,14 @@ struct Worm
         ivec2 head = segments.back();
         ivec2 pre_head = segments[segments.size() - 2];
         ivec2 current_dir = head - pre_head;
+        return ChooseDirectionLow(map, head, current_dir, [&](ivec2 tile_pos)
+        {
+            return std::any_of(segments.begin(), segments.end(), [&](ivec2 seg){return seg == tile_pos;});
+        });
+    }
+
+    static ivec2 ChooseDirectionLow(const Map &map, ivec2 pos, ivec2 current_dir, std::function<bool(ivec2 tile_pos)> is_tile_banned = nullptr, bool go_back_if_stuck = false, bool prefer_left = false)
+    {
         if (!current_dir)
             current_dir = map.data.worm_starting_dir;
 
@@ -987,9 +1042,9 @@ struct Worm
         {
             int ret = 0;
 
-            if (std::find(segments.begin(), segments.end(), tile_pos) != segments.end())
+            if (is_tile_banned && is_tile_banned(tile_pos))
                 ret = 0; // Refuse to touch your own body.
-            else if (tile_pos == map.data.exit_pos && tile_pos - segments.back() == -map.data.exit_dir)
+            else if (tile_pos == map.data.exit_pos && tile_pos - pos == -map.data.exit_dir)
                 ret = 98; // Go the exit if possible.
             else
                 ret = map.InfoAt(tile_pos).path_priority;
@@ -997,13 +1052,18 @@ struct Worm
             return ret;
         };
 
-        auto p_fwd = GetPathPriority(segments.back() + current_dir);
-        auto p_left = GetPathPriority(segments.back() + current_dir.rot90(-1));
-        auto p_right = GetPathPriority(segments.back() + current_dir.rot90(1));
+        auto p_fwd = GetPathPriority(pos + current_dir);
+        auto p_left = GetPathPriority(pos + current_dir.rot90(-1));
+        auto p_right = GetPathPriority(pos + current_dir.rot90(1));
+        auto p_back = go_back_if_stuck ? GetPathPriority(pos - current_dir) : 0;
 
-        // Stop if nowhere to go.
+        // Nowhere to go.
         if (max(p_fwd, p_left, p_right) <= 0)
+        {
+            if (p_back > 0)
+                return -current_dir;
             return ivec2();
+        }
 
         // If the current dir is at least as good as the alternatives, keep it.
         if (p_fwd >= p_left && p_fwd >= p_right)
@@ -1014,15 +1074,15 @@ struct Worm
         {
             int min_dist_sqr = -1;
             std::optional<ivec2> bait_dir;
-            for (index_vec2 pos : vector_range(map.tiles.size()))
+            for (index_vec2 bait_tile : vector_range(map.tiles.size()))
             {
-                if (map.At(pos).type == Map::Tile::bait && abs(sign(pos - segments.back())) != abs(current_dir) )
+                if (map.At(bait_tile).type == Map::Tile::bait && abs(sign(bait_tile - pos)) != abs(current_dir) )
                 {
-                    int dist_sqr = (pos - segments.back()).len_sqr();
+                    int dist_sqr = (bait_tile - pos).len_sqr();
                     if (min_dist_sqr == -1 || min_dist_sqr > dist_sqr)
                     {
                         min_dist_sqr = dist_sqr;
-                        bait_dir = pos - segments.back();
+                        bait_dir = bait_tile - pos;
                     }
                 }
             }
@@ -1030,8 +1090,12 @@ struct Worm
                 return sign(abs(sign(current_dir.rot90())) * *bait_dir);
         }
 
+        // If `go_back_if_stuck` is set, and both left and right are equally good, go back.
+        if (go_back_if_stuck && p_left == p_right)
+            return -current_dir;
+
         // Pick the best of the two directions.
-        if (p_left > p_right)
+        if (prefer_left ? p_left >= p_right : p_left > p_right)
             return current_dir.rot90(-1);
         else
             return current_dir.rot90(1);
@@ -1155,6 +1219,10 @@ struct Worm
                 bool ok = true;
                 if (crawl_offset >= tile_size / 2 - 3)
                 {
+                    // Play the winning sound.
+                    if (segments.back() == map.data.exit_pos && segments[segments.size() - 2] != map.data.exit_pos)
+                        Sounds::next_level(map.data.exit_pos * tile_size + tile_size/2);
+
                     bool at_exit = map.data.exit_pos == segments.back();
                     ivec2 chosen_dir = at_exit ? ivec2() : ChooseDirection(map);
 
@@ -1165,8 +1233,7 @@ struct Worm
                         std::rotate(segments.begin(), segments.begin() + 1, segments.end());
 
                         { // Destroy tiles.
-                            bool at_map_border = ((segments.back() - 1 < 0).any() || (segments.back() + 1 >= map.tiles.size()).any());
-                            if (!at_map_border && map.InfoAt(segments.back()).breakable)
+                            if (!map.TilePosIsAtBorder(segments.back()) && map.InfoAt(segments.back()).breakable)
                             {
                                 Map::Tile prev_tile = map.At(segments.back()).type;
                                 map.At(segments.back()).type = Map::Tile::air;
@@ -1201,7 +1268,7 @@ struct Worm
 
     void Draw(ivec2 camera_pos) const
     {
-        float alpha = clamp_min(1 - death_timer / 45.f);
+        float alpha = clamp_min(1 - death_timer / 30.f);
         if (alpha <= 0)
             return;
 
@@ -1297,9 +1364,98 @@ struct Worm
     }
 };
 
+struct Bug
+{
+    ivec2 tile_pos;
+    ivec2 dir;
+
+    int crawl = 0;
+
+    bool dead = false;
+    int death_timer = 0;
+
+    static constexpr int max_death_timer = 20;
+
+    ivec2 HitboxTilePos() const
+    {
+        if (crawl < tile_size / 2)
+            return tile_pos;
+        else
+            return tile_pos + dir;
+    }
+
+    ivec2 ChooseDirection(const Map &map) const
+    {
+        return Worm::ChooseDirectionLow(map, tile_pos, dir, [&](ivec2 pos){return map.InfoAt(pos).path_priority < 99 && map.At(pos).type != Map::Tile::spike;}, true, true);
+    }
+
+    void Tick(Map &map, ParticleController &par)
+    {
+        // Crawl.
+        if (!dead && map.global_time % 2 == 0)
+        {
+            if (crawl > 0)
+            {
+                crawl++;
+                if (crawl == tile_size)
+                {
+                    crawl = 0;
+                    tile_pos += dir;
+                }
+            }
+            else
+            {
+                if (ivec2 next_dir = ChooseDirection(map))
+                {
+                    dir = next_dir;
+                    crawl++;
+                }
+            }
+        }
+
+        // Destroy the bait if touching it.
+        if (!dead)
+        {
+            ivec2 hitbox_pos = HitboxTilePos();
+            if (map.At(hitbox_pos).type == Map::Tile::bait)
+            {
+                map.At(hitbox_pos).type = Map::Tile::air;
+                ivec2 pixel_pos = hitbox_pos * tile_size + tile_size / 2;
+                par.EffectBait(pixel_pos, fvec2(tile_size));
+                Sounds::bait(pixel_pos, 0.5);
+            }
+        }
+
+        // Die from spikes.
+        if (!dead && map.InfoAt(HitboxTilePos()).kills)
+        {
+            ivec2 pixel_pos = HitboxTilePos() * tile_size + tile_size / 2;
+            par.EffectBloodExplosionMinor(pixel_pos, fvec2(tile_size));
+            Sounds::bug_dies(pixel_pos, 0.3);
+            dead = true;
+        }
+
+        if (dead)
+            death_timer++;
+    }
+
+    void Render(ivec2 camera_pos) const
+    {
+        constexpr int anim_period = 40;
+        constexpr int sprite_size = tile_size * 2;
+
+        int anim_state = window.Ticks() % anim_period < anim_period / 2;
+        int anim_dir = dir == ivec2(1,0) ? 0 : dir == ivec2(0,1) ? 1 : dir == ivec2(-1,0) ? 2 : 3;
+        float alpha = clamp(1 - death_timer / float(max_death_timer));
+
+        r.iquad(tile_pos * tile_size + tile_size / 2 + dir * crawl - camera_pos, atlas.bug.region(ivec2(anim_dir, anim_state) * sprite_size, ivec2(sprite_size))).center().alpha(alpha);
+    }
+};
+
 struct World
 {
     Worm worm;
+    std::vector<Bug> bugs;
     Map map;
     ParticleController par;
     ivec2 camera_pos;
@@ -1350,8 +1506,32 @@ struct World
         // The logic affected by game speed.
         for (int i = 0; i < (checkbox_halfspeed.enabled ? 1 : 2); i++)
         {
-            { // Worm
-                worm.Tick(map, par, !checkbox_pause.enabled);
+            // Worm.
+            worm.Tick(map, par, !checkbox_pause.enabled);
+
+            // Bugs.
+            if (!checkbox_pause.enabled)
+            {
+                // Tick.
+                for (Bug &bug : bugs)
+                    bug.Tick(map, par);
+
+                // Remove dead bugs.
+                std::erase_if(bugs, [](const Bug &bug){return bug.death_timer >= bug.max_death_timer;});
+            }
+
+            // Worm-bug interaction.
+            if (!checkbox_pause.enabled && !worm.dead)
+            {
+                for (ivec2 seg : worm.segments)
+                {
+                    if (std::any_of(bugs.begin(), bugs.end(), [&](const Bug &bug){return !bug.dead && bug.HitboxTilePos() == seg;}))
+                    {
+                        worm.dead = true;
+                        worm.need_death_anim = true;
+                        break;
+                    }
+                }
             }
 
             // Camera pos.
@@ -1456,6 +1636,7 @@ struct World
                     // Bomb.
                     hovered_tile_valid = map.InfoAt(*hovered_tile_pos).bombable;
 
+                    // Checking for a worm.
                     bool worm_hovered = false;
                     decltype(worm.segments)::iterator hovered_worm_segment;
                     if (!hovered_tile_valid && !worm.dead && (hovered_worm_segment = std::find(worm.segments.begin(), worm.segments.end(), *hovered_tile_pos)) != worm.segments.end())
@@ -1464,16 +1645,20 @@ struct World
                         worm_hovered = true;
                     }
 
+                    // Checking for a bug.
+                    // Note that we don't remember the exact bug, which allows us to blow up more than one at a time.
+                    bool bug_hovered = false;
+                    if (!hovered_tile_valid && std::any_of(bugs.begin(), bugs.end(), [&](const Bug &bug){return bug.HitboxTilePos() == *hovered_tile_pos;}))
+                    {
+                        hovered_tile_valid = true;
+                        bug_hovered = true;
+                    }
+
                     if (hovered_tile_valid && mouse.left.pressed())
                     {
                         ivec2 pixel_pos = *hovered_tile_pos * tile_size + tile_size / 2;
 
-                        if (!worm_hovered)
-                        {
-                            // Destroy tile.
-                            map.At(*hovered_tile_pos).type = Map::Tile::air;
-                        }
-                        else
+                        if (worm_hovered)
                         {
                             // Shorten the worm.
 
@@ -1492,6 +1677,25 @@ struct World
                                 worm.segments.erase(worm.segments.begin(), hovered_worm_segment + 1);
                             }
                         }
+                        else if (bug_hovered)
+                        {
+                            // Destroy bug.
+                            for (auto it = bugs.begin(); it != bugs.end();)
+                            {
+                                bool is_hit = it->HitboxTilePos() == *hovered_tile_pos;
+                                if (is_hit)
+                                    it = bugs.erase(it);
+                                else
+                                    it++;
+                            }
+                            Sounds::bug_dies(pixel_pos);
+                        }
+                        else
+                        {
+                            // Destroy tile.
+                            map.At(*hovered_tile_pos).type = Map::Tile::air;
+                        }
+
 
                         par.EffectExplosion(pixel_pos, fvec2(tile_size));
                         Sounds::explosion(pixel_pos);
@@ -1544,17 +1748,26 @@ struct World
         }
 
         { // Fade.
-            clamp_var_min(fade_in -= 0.045f);
+            clamp_var_min(fade_in -= 0.055f);
 
             if (ShouldFadeOut())
-                clamp_var_max(fade_out += 0.045);
+                clamp_var_max(fade_out += 0.055);
         }
     }
 
     void Render() const
     {
+        // Worm.
         worm.Draw(camera_pos);
+
+        // Map.
         map.render(camera_pos, screen_size);
+
+        // Bugs.
+        for (const Bug &bug : bugs)
+            bug.Render(camera_pos);
+
+        // Particles.
         par.Render(camera_pos, screen_size);
 
         { // World gui.
@@ -1646,8 +1859,15 @@ namespace States
 
             w = World{};
             w.map = map_backup;
+
             for (int i = 0; i < w.map.data.worm_starting_len; i++)
                 w.worm.segments.push_back(w.map.data.worm_starting_pos);
+
+            for (const MapPoints::BugSpawn &spawn : w.map.data.bug_spawns)
+                w.bugs.push_back(adjust(Bug{}, tile_pos = spawn.pos, dir = spawn.dir));
+
+            // Tick, for a good measure.
+            w.Tick();
         }
 
         Game()
