@@ -865,6 +865,8 @@ struct Worm
     float fall_offset = 0;
     float fall_speed = 0;
     bool dead = false;
+    bool need_death_anim = false;
+    bool no_sound_on_death_animation = false;
     int death_timer = 0;
     bool out_of_bounds = false;
 
@@ -922,18 +924,21 @@ struct Worm
                 if (map.InfoAt(seg).kills)
                 {
                     dead = true;
+                    need_death_anim = true;
                     break;
                 }
             }
+        }
 
-            // Death animation.
-            if (dead)
-            {
-                for (ivec2 seg : segments)
-                    par.EffectBloodExplosion(seg * tile_size + tile_size/2, fvec2(tile_size));
+        // Death animation.
+        if (need_death_anim)
+        {
+            need_death_anim = false;
+            for (ivec2 seg : segments)
+                par.EffectBloodExplosion(seg * tile_size + tile_size/2, fvec2(tile_size));
 
+            if (!no_sound_on_death_animation)
                 Sounds::player_dies(segments[segments.size() / 2] * tile_size + tile_size / 2);
-            }
         }
 
         // Stop if dead.
@@ -1129,7 +1134,7 @@ struct Worm
                         straight_reg = atlas.worm.region(ivec2(1,0) * tile_size, ivec2(tile_size));
                 }
 
-                Draw::ShiftedTile(base_pos, {region, &straight_reg, nullptr, (*prev_delta < 0).any(), true}, *prev_delta * crawl_offset, alpha);
+                Draw::ShiftedTile(base_pos, {region, segments.size() > 2 ? &straight_reg : nullptr, nullptr, (*prev_delta < 0).any(), true}, *prev_delta * crawl_offset, alpha);
             }
             else if (*prev_delta == *next_delta)
             {
@@ -1299,13 +1304,46 @@ struct World
                 {
                     // Bomb.
                     hovered_tile_valid = map.InfoAt(*hovered_tile_pos).bombable;
+
+                    bool worm_hovered = false;
+                    decltype(worm.segments)::iterator hovered_worm_segment;
+                    if (!hovered_tile_valid && !worm.dead && (hovered_worm_segment = std::find(worm.segments.begin(), worm.segments.end(), *hovered_tile_pos)) != worm.segments.end())
+                    {
+                        hovered_tile_valid = true;
+                        worm_hovered = true;
+                    }
+
                     if (hovered_tile_valid && mouse.left.pressed())
                     {
-                        map.At(*hovered_tile_pos).type = Map::Tile::air;
                         ivec2 pixel_pos = *hovered_tile_pos * tile_size + tile_size / 2;
+
+                        if (!worm_hovered)
+                        {
+                            // Destroy tile.
+                            map.At(*hovered_tile_pos).type = Map::Tile::air;
+                        }
+                        else
+                        {
+                            // Shorten the worm.
+
+                            if (worm.segments.back() == *hovered_tile_pos || (worm.segments.size() >= 2 && worm.segments[worm.segments.size() - 2] == *hovered_tile_pos))
+                            {
+                                // If one of the first two segments explodes, destroy the whole worm.
+                                worm.dead = true;
+                                worm.need_death_anim = true;
+                                worm.no_sound_on_death_animation = true;
+                            }
+                            else
+                            {
+                                // Otherwise shrink the worm.
+                                for (auto it = worm.segments.begin(); it != hovered_worm_segment + 1; it++)
+                                    par.EffectBloodExplosion(*it * tile_size + tile_size / 2, fvec2(tile_size));
+                                worm.segments.erase(worm.segments.begin(), hovered_worm_segment + 1);
+                            }
+                        }
+
                         par.EffectExplosion(pixel_pos, fvec2(tile_size));
                         Sounds::explosion(pixel_pos);
-
                         map.data.num_bombs--;
                     }
                 }
