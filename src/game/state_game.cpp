@@ -86,6 +86,7 @@ namespace Sounds
     ADD_SOUND(player_dies, 0.1)
     ADD_SOUND(explosion, 0.2)
     ADD_SOUND(reverse, 0.2)
+    ADD_SOUND(bait, 0.2)
 
     #undef ADD_SOUND
 }
@@ -485,8 +486,27 @@ struct ParticleController
         );
     }
 
+    static Particle ParticleBait(fvec2 pos, fvec2 vel, float min_size, float max_size, int max_time)
+    {
+        float p = 0 <= randomize.real() <= 1;
+        float c = -0.3 <= randomize.real() <= 0.3;
+        return adjust(Particle{}
+            , pos = pos
+            , vel = vel
+            , acc = fvec2(0,0.02)
+            , max_time = max_time
+            , damp = mix(p, 0.06, 0.12)
+            , p.size = mix(p, max_size, min_size)
+            , p.color = clamp(fvec3(1 - abs(c), c, -c))
+            , p1 = _object_.p
+            , p1->t = _object_.max_time
+            , p1->beta = 0
+            , p1->size = 0
+        );
+    }
 
-    void EffectDirtDestroyed(fvec2 center_pos, fvec2 area, int n = 15)
+
+    void EffectDirtDestroyed(fvec2 center_pos, fvec2 area, int n = 35)
     {
         while (n-- > 0)
         {
@@ -533,6 +553,23 @@ struct ParticleController
             );
         }
     }
+
+    void EffectBait(fvec2 center_pos, fvec2 area, int n = 20)
+    {
+        while (n-- > 0)
+        {
+            particles.push_back(ParticleBait(
+                center_pos + fvec2(-area.x/2 <= randomize.real() <= area.x/2, -area.y/2 <= randomize.real() <= area.y/2),
+                fvec2::dir(randomize.angle(), 0.5 <= randomize.real() <= 2),
+                2, 6, 30 <= randomize.integer() <= 60)
+            );
+        }
+    }
+
+    void EffectBaitMinor(fvec2 center_pos, fvec2 area)
+    {
+        EffectBait(center_pos, area, 10);
+    }
 };
 
 namespace MapPoints
@@ -551,6 +588,7 @@ namespace MapPoints
         ivec2 exit_dir{};
 
         int num_dirt = 0;
+        int num_bait = 0;
         int num_bombs = 0;
         int num_reverses = 0;
     };
@@ -568,6 +606,7 @@ namespace MapPoints
             DECL(int) len
             DECL(ivec2) dir
             DECL(int INIT=0 ATTR Refl::Optional) dirt
+            DECL(int INIT=0 ATTR Refl::Optional) bait
             DECL(int INIT=0 ATTR Refl::Optional) bombs
             DECL(int INIT=0 ATTR Refl::Optional) rev
         )
@@ -584,6 +623,7 @@ namespace MapPoints
             state.worm_starting_dir = dir;
             state.worm_starting_len = len;
             state.num_dirt = dirt;
+            state.num_bait = bait;
             state.num_bombs = bombs;
             state.num_reverses = rev;
         }
@@ -618,6 +658,7 @@ class Map
         pipe,
         wall,
         spike,
+        bait,
         _count,
     };
 
@@ -641,6 +682,7 @@ class Map
         /* pipe  */ {.renderer = TileRenderer::pipe  , .tile_index =  1, .breakable = false, .path_priority =  0, .kills = false, .bombable = false},
         /* wall  */ {.renderer = TileRenderer::pipe  , .tile_index =  2, .breakable = false, .path_priority =  0, .kills = false, .bombable = true },
         /* spike */ {.renderer = TileRenderer::pipe  , .tile_index =  3, .breakable = false, .path_priority =  9, .kills = true , .bombable = true },
+        /* bait  */ {.renderer = TileRenderer::simple, .tile_index =  0, .breakable = true , .path_priority = 99, .kills = false, .bombable = true },
     };
     static_assert(std::size(tile_info) == size_t(Tile::_count));
 
@@ -926,6 +968,27 @@ struct Worm
         if (p_fwd >= p_left && p_fwd >= p_right)
             return current_dir;
 
+        // Check for bait.
+        if (p_left == p_right)
+        {
+            int min_dist_sqr = -1;
+            std::optional<ivec2> bait_dir;
+            for (index_vec2 pos : vector_range(map.tiles.size()))
+            {
+                if (map.At(pos).type == Map::Tile::bait && abs(sign(pos - segments.back())) != abs(current_dir) )
+                {
+                    int dist_sqr = (pos - segments.back()).len_sqr();
+                    if (min_dist_sqr == -1 || min_dist_sqr > dist_sqr)
+                    {
+                        min_dist_sqr = dist_sqr;
+                        bait_dir = pos - segments.back();
+                    }
+                }
+            }
+            if (bait_dir)
+                return sign(abs(sign(current_dir.rot90())) * *bait_dir);
+        }
+
         // Pick the best of the two directions.
         if (p_left > p_right)
             return current_dir.rot90(-1);
@@ -1064,10 +1127,19 @@ struct Worm
                             bool at_map_border = ((segments.back() - 1 < 0).any() || (segments.back() + 1 >= map.tiles.size()).any());
                             if (!at_map_border && map.InfoAt(segments.back()).breakable)
                             {
+                                Map::Tile prev_tile = map.At(segments.back()).type;
                                 map.At(segments.back()).type = Map::Tile::air;
                                 ivec2 pixel_pos = segments.back() * tile_size + tile_size / 2;
-                                par.EffectDirtDestroyed(pixel_pos, fvec2(tile_size));
-                                Sounds::dirt_breaks(pixel_pos, 0.5);
+                                if (prev_tile == Map::Tile::bait)
+                                {
+                                    par.EffectBait(pixel_pos, fvec2(tile_size));
+                                    Sounds::bait(pixel_pos, 0.5);
+                                }
+                                else
+                                {
+                                    par.EffectDirtDestroyed(pixel_pos, fvec2(tile_size));
+                                    Sounds::dirt_breaks(pixel_pos, 0.5);
+                                }
                             }
                         }
 
@@ -1205,9 +1277,10 @@ struct World
 
     inline static Gui::RadioButtonList radiobuttons_tools;
     inline static Gui::RadioButton button_add_dirt = {6, radiobuttons_tools, "Create dirt"};
+    inline static Gui::RadioButton button_add_bait = {8, radiobuttons_tools, "Create bait"};
     inline static Gui::RadioButton button_bomb = {5, radiobuttons_tools, "Destroy object"};
-    inline static Gui::Button button_reverse = {7, "Reverse worm"};
-    inline static Gui::ButtonList buttons_tools = Gui::ButtonList(screen_size.x / 2, 1, {&button_add_dirt, &button_reverse, &button_bomb});
+    inline static Gui::Button button_reverse = {7, "Reverse"};
+    inline static Gui::ButtonList buttons_tools = Gui::ButtonList(screen_size.x / 2, 1, {&button_add_dirt, &button_add_bait, &button_reverse, &button_bomb});
 
     inline static const std::vector<Gui::ButtonList *> buttonlists = {&buttons_game_control, &buttons_tools};
 
@@ -1261,6 +1334,7 @@ struct World
         { // Gui.
             // Update button subscripts.
             button_add_dirt.subscript = map.data.num_dirt;
+            button_add_bait.subscript = map.data.num_bait;
             button_bomb.subscript = map.data.num_bombs;
             button_reverse.subscript = map.data.num_reverses;
 
@@ -1397,6 +1471,20 @@ struct World
                         map.data.num_dirt--;
                     }
                 }
+                else if (button_add_bait.active)
+                {
+                    // Add bait.
+                    hovered_tile_valid = map.At(*hovered_tile_pos).type == Map::Tile::air;
+                    if (hovered_tile_valid && mouse.left.pressed())
+                    {
+                        map.At(*hovered_tile_pos).type = Map::Tile::bait;
+                        ivec2 pixel_pos = *hovered_tile_pos * tile_size + tile_size / 2;
+                        par.EffectBaitMinor(pixel_pos, fvec2(tile_size));
+                        Sounds::bait(pixel_pos);
+
+                        map.data.num_bait--;
+                    }
+                }
             }
 
             // Reverse worm.
@@ -1415,10 +1503,10 @@ struct World
         }
 
         { // Fade.
-            clamp_var_min(fade_in -= 0.035f);
+            clamp_var_min(fade_in -= 0.045f);
 
             if (ShouldFadeOut())
-                clamp_var_max(fade_out += 0.035f);
+                clamp_var_max(fade_out += 0.045);
         }
     }
 
@@ -1452,7 +1540,7 @@ struct World
         // Fade.
         float fade = max(fade_in, fade_out);
         if (fade > 0)
-            r.iquad(ivec2(0), screen_size).center().color(fvec3(0)).alpha(fade);
+            r.iquad(ivec2(0), screen_size).center().color(fvec3(0)).alpha(smoothstep(clamp(fade)));
 
         { // Gui panel.
             // Panel background.
