@@ -5,7 +5,7 @@
 
 SIMPLE_STRUCT( Atlas
     DECL(Graphics::TextureAtlas::Region)
-        worm, tiles, vignette, panel, button, button_icons, button_subscripts
+        worm, tiles, vignette, panel, button, button_icons, button_subscripts, cursor
 )
 static Atlas atlas;
 
@@ -70,9 +70,11 @@ namespace Sounds
         } \
 
     ADD_SOUND(dirt_breaks, 0.5)
+    ADD_SOUND(dirt_placed, 0.2)
     ADD_SOUND(landing, 0.2)
     ADD_SOUND(click, 0.03)
     ADD_SOUND(player_dies, 0.1)
+    ADD_SOUND(explosion, 0.2)
 
     #undef ADD_SOUND
 }
@@ -225,6 +227,13 @@ namespace Gui
         int GetBackgroundVariant() const override
         {
             return Button::GetBackgroundVariant() + 3 * active;
+        }
+
+        void Tick() override
+        {
+            if (IsBlocked())
+                active = false;
+            Button::Tick();
         }
 
         void Click() override
@@ -446,6 +455,25 @@ struct ParticleController
         );
     }
 
+    static Particle ParticleFlame(fvec2 pos, fvec2 vel, float min_size, float max_size, int max_time)
+    {
+        float p = 0 <= randomize.real() <= 1;
+        float c = -0.5 <= randomize.real() <= 1;
+        return adjust(Particle{}
+            , pos = pos
+            , vel = vel
+            , acc = fvec2(0,-0.03)
+            , max_time = max_time
+            , damp = mix(p, 0.03, 0.05)
+            , p.size = mix(p, max_size, min_size)
+            , p.color = clamp(fvec3(c + 1, c, 0))
+            , p1 = _object_.p
+            , p1->t = _object_.max_time
+            , p1->size = 0
+        );
+    }
+
+
     void EffectDirtDestroyed(fvec2 center_pos, fvec2 area, int n = 15)
     {
         while (n-- > 0)
@@ -478,6 +506,18 @@ struct ParticleController
                 center_pos + fvec2(-area.x/2 <= randomize.real() <= area.x/2, -area.y/2 <= randomize.real() <= area.y/2),
                 fvec2::dir(randomize.angle(), 0 <= randomize.real() <= 2),
                 2, 16, 45 <= randomize.integer() <= 90)
+            );
+        }
+    }
+
+    void EffectExplosion(fvec2 center_pos, fvec2 area, int n = 20)
+    {
+        while (n-- > 0)
+        {
+            particles.push_back(ParticleFlame(
+                center_pos + fvec2(-area.x/2 <= randomize.real() <= area.x/2, -area.y/2 <= randomize.real() <= area.y/2),
+                fvec2::dir(randomize.angle(), 0 <= randomize.real() <= 1.25),
+                2, 12, 15 <= randomize.integer() <= 30)
             );
         }
     }
@@ -570,16 +610,17 @@ class Map
         bool breakable = true;
         int path_priority = 0; // Worm prefers tiles with a higher value. 0 means it will refuse to go there.
         bool kills = false;
+        bool bombable = false;
     };
 
     // Tile properties table.
     inline static const TileInfo tile_info[] =
     {
-        /* air   */ {.renderer = TileRenderer::simple, .tile_index = -1, .breakable = false, .path_priority = 99, .kills = false},
-        /* dirt  */ {.renderer = TileRenderer::fancy , .tile_index =  0, .breakable = true , .path_priority =  9, .kills = false},
-        /* pipe  */ {.renderer = TileRenderer::pipe  , .tile_index =  1, .breakable = false, .path_priority =  0, .kills = false},
-        /* wall  */ {.renderer = TileRenderer::pipe  , .tile_index =  2, .breakable = false, .path_priority =  0, .kills = false},
-        /* spike */ {.renderer = TileRenderer::pipe  , .tile_index =  3, .breakable = false, .path_priority =  9, .kills = true },
+        /* air   */ {.renderer = TileRenderer::simple, .tile_index = -1, .breakable = false, .path_priority = 99, .kills = false, .bombable = false},
+        /* dirt  */ {.renderer = TileRenderer::fancy , .tile_index =  0, .breakable = true , .path_priority =  9, .kills = false, .bombable = true },
+        /* pipe  */ {.renderer = TileRenderer::pipe  , .tile_index =  1, .breakable = false, .path_priority =  0, .kills = false, .bombable = false},
+        /* wall  */ {.renderer = TileRenderer::pipe  , .tile_index =  2, .breakable = false, .path_priority =  0, .kills = false, .bombable = true },
+        /* spike */ {.renderer = TileRenderer::pipe  , .tile_index =  3, .breakable = false, .path_priority =  9, .kills = true , .bombable = true },
     };
     static_assert(std::size(tile_info) == size_t(Tile::_count));
 
@@ -825,6 +866,7 @@ struct Worm
     float fall_speed = 0;
     bool dead = false;
     int death_timer = 0;
+    bool out_of_bounds = false;
 
     ivec2 ChooseDirection(const Map &map) const
     {
@@ -994,7 +1036,8 @@ struct Worm
                         std::rotate(segments.begin(), segments.begin() + 1, segments.end());
 
                         { // Destroy tiles.
-                            if (map.InfoAt(segments.back()).breakable)
+                            bool at_map_border = ((segments.back() - 1 < 0).any() || (segments.back() + 1 >= map.tiles.size()).any());
+                            if (!at_map_border && map.InfoAt(segments.back()).breakable)
                             {
                                 map.At(segments.back()).type = Map::Tile::air;
                                 ivec2 pixel_pos = segments.back() * tile_size + tile_size / 2;
@@ -1002,6 +1045,10 @@ struct Worm
                                 Sounds::dirt_breaks(pixel_pos, 0.5);
                             }
                         }
+
+                        // Check if out of bounds.
+                        if (!map.tiles.pos_in_range(segments.back()))
+                            out_of_bounds = true;
                     }
                     else
                     {
@@ -1122,13 +1169,17 @@ struct World
     float fade_in = 1;
     float fade_out = 0;
 
+    std::optional<ivec2> hovered_tile_pos;
+    bool hovered_tile_valid = false;
+    bool any_tool_enabled = false;
+
     inline static Gui::StickyButton button_restart = {0, "[R] Restart level"};
     inline static Gui::Checkbox checkbox_pause = {2, 1, true, "[Space] Play/pause"};
     inline static Gui::Checkbox checkbox_halfspeed = {3, 4, false, "[Tab] Change game speed"};
     inline static Gui::ButtonList buttons_game_control = Gui::ButtonList(-screen_size.x / 2, -1, {&button_restart, &checkbox_halfspeed, &checkbox_pause});
 
     inline static Gui::RadioButtonList radiobuttons_tools;
-    inline static Gui::RadioButton button_add_dirt = {5, radiobuttons_tools, "Add dirt"};
+    inline static Gui::RadioButton button_add_dirt = {6, radiobuttons_tools, "Add dirt"};
     inline static Gui::RadioButton button_bomb = {5, radiobuttons_tools, "Destroy object"};
     inline static Gui::ButtonList buttons_tools = Gui::ButtonList(screen_size.x / 2, 1, {&button_add_dirt, &button_bomb});
 
@@ -1138,6 +1189,8 @@ struct World
     {
         if (button_restart.was_clicked)
             return true; // Manual restart.
+        if (worm.out_of_bounds)
+            return true; // Out of bounds.
         if (worm.dead && worm.death_timer > 60)
             return true; // Death.
         if (!worm.segments.empty() && worm.segments.front() == map.data.exit_pos)
@@ -1148,7 +1201,7 @@ struct World
     std::optional<int> ShouldChangeLevel()
     {
         if (ShouldFadeOut() && fade_out >= 1)
-            return worm.dead || button_restart.was_clicked ? map.level_index : map.level_index + 1;
+            return worm.dead || worm.out_of_bounds || button_restart.was_clicked ? map.level_index : map.level_index + 1;
         return {};
     }
 
@@ -1163,6 +1216,7 @@ struct World
 
             // Camera pos.
             camera_pos = map.tiles.size() * tile_size / 2;
+            camera_pos.y += atlas.panel.size.y / 2;
 
             // Global timer.
             map.global_time++;
@@ -1190,15 +1244,86 @@ struct World
                     list->Tick();
             }
 
-            if (Input::Button(Input::space).pressed())
-                checkbox_pause.enabled = !checkbox_pause.enabled;
+            { // Extra keyboard and mouse controls.
+                // Restart from keyboard.
+                if (Input::Button(Input::r).pressed())
+                    button_restart.was_clicked = true;
+                // Pause from keyboard.
+                if (Input::Button(Input::space).pressed())
+                    checkbox_pause.enabled = !checkbox_pause.enabled;
+                // Toggle speed from keyboard.
+                if (Input::Button(Input::tab).pressed())
+                    checkbox_halfspeed.enabled = !checkbox_halfspeed.enabled;
 
-            if (Input::Button(Input::tab).pressed())
-                checkbox_halfspeed.enabled = !checkbox_halfspeed.enabled;
+                // Unselect tool.
+                if (mouse.right.pressed())
+                {
+                    for (size_t i = 0; i < radiobuttons_tools.con.Size(); i++)
+                    {
+                        if (radiobuttons_tools.con[i]->active)
+                        {
+                            radiobuttons_tools.con[i]->active = false;
+                            Sounds::click(mouse.pos());
+                        }
+                    }
+                }
+            }
         }
 
         { // Clicking tiles.
+            // Check if any tool is enabled.
+            any_tool_enabled = false;
+            for (size_t i = 0; i < radiobuttons_tools.con.Size(); i++)
+            {
+                if (radiobuttons_tools.con[i]->active)
+                {
+                    any_tool_enabled = true;
+                    break;
+                }
+            }
 
+            // Detect hovered tile pos.
+            hovered_tile_pos = {};
+            hovered_tile_valid = false;
+            if (any_tool_enabled && window.HasMouseFocus() && (mouse.pos().abs() < screen_size/2).all() && mouse.pos().y <= screen_size.y / 2 - atlas.panel.size.y)
+            {
+                hovered_tile_pos = div_ex(mouse.pos() + camera_pos, tile_size);
+                if ((*hovered_tile_pos - 1 < 0).any() || (*hovered_tile_pos + 1 >= map.tiles.size()).any())
+                    hovered_tile_pos = {}; // Refuse to interact with a tile on the map border, or outside.
+            }
+
+            // Specific tools.
+            if (hovered_tile_pos)
+            {
+                if (button_bomb.active)
+                {
+                    // Bomb.
+                    hovered_tile_valid = map.InfoAt(*hovered_tile_pos).bombable;
+                    if (hovered_tile_valid && mouse.left.pressed())
+                    {
+                        map.At(*hovered_tile_pos).type = Map::Tile::air;
+                        ivec2 pixel_pos = *hovered_tile_pos * tile_size + tile_size / 2;
+                        par.EffectExplosion(pixel_pos, fvec2(tile_size));
+                        Sounds::explosion(pixel_pos);
+
+                        map.data.num_bombs--;
+                    }
+                }
+                else if (button_add_dirt.active)
+                {
+                    // Add dirt.
+                    hovered_tile_valid = map.At(*hovered_tile_pos).type == Map::Tile::air;
+                    if (hovered_tile_valid && mouse.left.pressed())
+                    {
+                        map.At(*hovered_tile_pos).type = Map::Tile::dirt;
+                        ivec2 pixel_pos = *hovered_tile_pos * tile_size + tile_size / 2;
+                        par.EffectDirtMinor(pixel_pos, fvec2(tile_size), 6);
+                        Sounds::dirt_placed(pixel_pos);
+
+                        map.data.num_dirt--;
+                    }
+                }
+            }
         }
 
         { // Fade.
@@ -1215,15 +1340,38 @@ struct World
         map.render(camera_pos, screen_size);
         par.Render(camera_pos, screen_size);
 
-        { // Gui.
-            r.iquad(ivec2(0, screen_size.y / 2), ivec2(screen_size.x, atlas.panel.size.y)).tex(atlas.panel.pos, atlas.panel.size).center(fvec2(0.5, atlas.panel.size.y));
-            for (const Gui::ButtonList *list : buttonlists)
-                list->Draw();
+        { // World gui.
+            // Map border.
+            if (any_tool_enabled)
+            {
+                constexpr int margin = 6;
+                constexpr fvec3 color(0.8, 1, 0.5);
+                constexpr float alpha = 0.15;
+                constexpr float beta = 1;
+                ivec2 border_pos(tile_size - margin);
+                ivec2 border_size = (map.tiles.size() - 2) * tile_size + margin * 2;
+                r.iquad(-camera_pos + border_pos, border_size with(y = 1)).color(color).alpha(alpha).beta(beta);
+                r.iquad(-camera_pos + border_pos with(y++), border_size with(x = 1, y -= 2)).color(color).alpha(alpha).beta(beta);
+                r.iquad(-camera_pos + border_pos with(y += border_size.y - 1), border_size with(y = 1)).color(color).alpha(alpha).beta(beta);
+                r.iquad(-camera_pos + border_pos with(y++, x += border_size.x - 1), border_size with(x = 1, y -= 2)).color(color).alpha(alpha).beta(beta);
+            }
+
+            // Tile cursor.
+            if (hovered_tile_pos)
+                r.iquad(*hovered_tile_pos * tile_size + tile_size/2 - camera_pos, atlas.cursor.region(ivec2(atlas.cursor.size.y * !hovered_tile_valid, 0), ivec2(atlas.cursor.size.y))).alpha(0.9 + 0.1 * sin(window.Ticks() % 120 / 120.f * 2 * f_pi)).center();
         }
 
         // Fade.
         if (float fade = max(fade_in, fade_out); fade > 0)
             r.iquad(ivec2(0), screen_size).center().color(fvec3(0)).alpha(fade);
+
+        { // Gui panel.
+            // Panel background.
+            r.iquad(ivec2(0, screen_size.y / 2), ivec2(screen_size.x, atlas.panel.size.y)).tex(atlas.panel.pos, atlas.panel.size).center(fvec2(0.5, atlas.panel.size.y));
+            // Buttons.
+            for (const Gui::ButtonList *list : buttonlists)
+                list->Draw();
+        }
 
         // Vignette.
         r.iquad(ivec2(0), atlas.vignette).center();
