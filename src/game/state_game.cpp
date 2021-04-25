@@ -5,7 +5,7 @@
 
 SIMPLE_STRUCT( Atlas
     DECL(Graphics::TextureAtlas::Region)
-        worm, tiles, vignette, panel, button, button_icons
+        worm, tiles, vignette, panel, button, button_icons, button_subscripts
 )
 static Atlas atlas;
 
@@ -89,6 +89,9 @@ namespace Gui
         std::string tooltip = 0;
         int hover_timer = 0;
 
+        std::optional<int> subscript;
+        virtual bool IsBlocked() const {return subscript && *subscript <= 0;}
+
         Button() {}
         Button(int icon_index, std::string tooltip) : icon_index(icon_index), tooltip(std::move(tooltip)) {}
 
@@ -109,13 +112,17 @@ namespace Gui
             return icon_index;
         }
 
-        bool IsHovered() const
+        virtual bool IsHovered() const
         {
+            if (IsBlocked())
+                return false;
             return (mouse.pos() >= pos).all() && (mouse.pos() < pos + Size()).all();
         }
 
-        bool IsClicked() const
+        virtual bool IsClicked() const
         {
+            if (IsBlocked())
+                return false;
             return mouse.left.released() && IsHovered();
         }
 
@@ -135,11 +142,22 @@ namespace Gui
             Sounds::click(mouse.pos());
         }
 
+        virtual int GetBackgroundVariant() const
+        {
+            return IsHovered() ? (mouse.left.down() ? 2 : 1) : 0;
+        }
+
         virtual void Draw() const
         {
-            int state = IsHovered() ? (mouse.left.down() ? 2 : 1) : 0;
-            r.iquad(pos, atlas.button.region(ivec2(SideDecoW() + Button::Size() * state, 0), ivec2(Button::Size())));
-            r.iquad(pos, atlas.button_icons.region(ivec2(Button::Size() * GetIconIndex(), 0), ivec2(Button::Size()))).alpha(state == 2 ? 0.75 : 1);
+            int bg_variant = GetBackgroundVariant();
+            r.iquad(pos, atlas.button.region(ivec2(SideDecoW() + Button::Size() * bg_variant, 0), ivec2(Button::Size())));
+            r.iquad(pos, atlas.button_icons.region(ivec2(Button::Size() * GetIconIndex(), 0), ivec2(Button::Size()))).alpha(bg_variant == 2 ? 0.75 : 1);
+            if (subscript)
+            {
+                r.iquad(pos + Size() - ivec2(atlas.button_subscripts.size.y), atlas.button_subscripts.region(ivec2(atlas.button_subscripts.size.y * clamp(*subscript, 0, 9), 0), ivec2(atlas.button_subscripts.size.y)));
+                if (IsBlocked())
+                    r.iquad(pos, ivec2(Size())).tex(atlas.button.pos + atlas.button.size - 0.5f, fvec2(0)).alpha(0.5);
+            }
             if (hover_timer > 30)
                 Draw::Tooltip(tooltip);
         }
@@ -169,10 +187,56 @@ namespace Gui
         using Button::Button;
 
         bool was_clicked = false;
+
+        bool IsHovered() const override
+        {
+            return !was_clicked && Button::IsHovered();
+        }
+        bool IsClicked() const override
+        {
+            return !was_clicked && Button::IsClicked();
+        }
+
         void Click() override
         {
             Button::Click();
             was_clicked = true;
+        }
+    };
+
+    struct RadioButton;
+    struct RadioButtonList
+    {
+        Sig::ConnectionList<RadioButtonList, RadioButton> con;
+    };
+
+    struct RadioButton : Button
+    {
+        Sig::Connection<RadioButton, RadioButtonList> other_buttons;
+
+        bool active = false;
+
+        RadioButton(int icon_index, RadioButtonList &others, std::string tooltip)
+            : Button(icon_index, std::move(tooltip))
+        {
+            Sig::Bind<&RadioButton::other_buttons, &RadioButtonList::con>(*this, others);
+        }
+
+        int GetBackgroundVariant() const override
+        {
+            return Button::GetBackgroundVariant() + 3 * active;
+        }
+
+        void Click() override
+        {
+            bool activate = !active;
+
+            const auto &list = other_buttons->con;
+            for (size_t i = 0; i < list.Size(); i++)
+                list[i]->active = false;
+
+            active = activate;
+            Button::Click();
         }
     };
 
@@ -431,6 +495,9 @@ namespace MapPoints
         bool exit_placed = false;
         ivec2 exit_pos{};
         ivec2 exit_dir{};
+
+        int num_dirt = 0;
+        int num_bombs = 0;
     };
 
     STRUCT( Base POLYMORPHIC )
@@ -444,15 +511,21 @@ namespace MapPoints
         MEMBERS(
             DECL(int) len
             DECL(ivec2) dir
+            DECL(int INIT=0 ATTR Refl::Optional) dirt
+            DECL(int INIT=0 ATTR Refl::Optional) bombs
         )
 
         void Process(State &state, ivec2 tile_pos) override
         {
             if (state.worm_placed)
                 Program::Error("More than one worm.");
+            state.worm_placed = true;
+
             state.worm_starting_pos = tile_pos;
             state.worm_starting_dir = dir;
             state.worm_starting_len = len;
+            state.num_dirt = dirt;
+            state.num_bombs = bombs;
         }
     };
 
@@ -464,9 +537,10 @@ namespace MapPoints
 
         void Process(State &state, ivec2 tile_pos) override
         {
-            if (state.worm_placed)
+            if (state.exit_placed)
                 Program::Error("More than one exit.");
             state.exit_placed = true;
+
             state.exit_pos = tile_pos;
             state.exit_dir = dir;
         }
@@ -1038,18 +1112,6 @@ struct Worm
     }
 };
 
-namespace Controls
-{
-    bool PausePressed()
-    {
-        return mouse.right.pressed() || Input::Button(Input::space).pressed();
-    }
-    bool ToggleSpeedPressed()
-    {
-        return Input::Button(Input::tab).pressed();
-    }
-}
-
 struct World
 {
     Worm worm;
@@ -1063,7 +1125,14 @@ struct World
     inline static Gui::StickyButton button_restart = {0, "[R] Restart level"};
     inline static Gui::Checkbox checkbox_pause = {2, 1, true, "[Space] Play/pause"};
     inline static Gui::Checkbox checkbox_halfspeed = {3, 4, false, "[Tab] Change game speed"};
-    inline static Gui::ButtonList buttons_mid = Gui::ButtonList(-screen_size.x / 2, -1, {&button_restart, &checkbox_halfspeed, &checkbox_pause});
+    inline static Gui::ButtonList buttons_game_control = Gui::ButtonList(-screen_size.x / 2, -1, {&button_restart, &checkbox_halfspeed, &checkbox_pause});
+
+    inline static Gui::RadioButtonList radiobuttons_tools;
+    inline static Gui::RadioButton button_add_dirt = {5, radiobuttons_tools, "Add dirt"};
+    inline static Gui::RadioButton button_bomb = {5, radiobuttons_tools, "Destroy object"};
+    inline static Gui::ButtonList buttons_tools = Gui::ButtonList(screen_size.x / 2, 1, {&button_add_dirt, &button_bomb});
+
+    inline static const std::vector<Gui::ButtonList *> buttonlists = {&buttons_game_control, &buttons_tools};
 
     bool ShouldFadeOut() const
     {
@@ -1110,16 +1179,26 @@ struct World
         par.Tick();
 
         { // Gui.
+            // Update button subscripts.
+            button_add_dirt.subscript = map.data.num_dirt;
+            button_bomb.subscript = map.data.num_bombs;
+
+            // Button ticks.
             if (!ShouldFadeOut())
             {
-                buttons_mid.Tick();
+                for (Gui::ButtonList *list : buttonlists)
+                    list->Tick();
             }
 
-            if (Controls::PausePressed())
-                checkbox_pause.Click();
+            if (Input::Button(Input::space).pressed())
+                checkbox_pause.enabled = !checkbox_pause.enabled;
 
-            if (Controls::ToggleSpeedPressed())
-                checkbox_halfspeed.Click();
+            if (Input::Button(Input::tab).pressed())
+                checkbox_halfspeed.enabled = !checkbox_halfspeed.enabled;
+        }
+
+        { // Clicking tiles.
+
         }
 
         { // Fade.
@@ -1138,7 +1217,8 @@ struct World
 
         { // Gui.
             r.iquad(ivec2(0, screen_size.y / 2), ivec2(screen_size.x, atlas.panel.size.y)).tex(atlas.panel.pos, atlas.panel.size).center(fvec2(0.5, atlas.panel.size.y));
-            buttons_mid.Draw();
+            for (const Gui::ButtonList *list : buttonlists)
+                list->Draw();
         }
 
         // Fade.
@@ -1170,6 +1250,12 @@ namespace States
         {
             w.checkbox_pause.enabled = true;
             w.button_restart.was_clicked = false;
+            for (size_t i = 0; i < w.radiobuttons_tools.con.Size(); i++)
+            {
+                w.radiobuttons_tools.con[i]->active = false;
+                w.radiobuttons_tools.con[i]->subscript = 0;
+            }
+
             w = World{};
             w.map = map_backup;
             for (int i = 0; i < w.map.data.worm_starting_len; i++)

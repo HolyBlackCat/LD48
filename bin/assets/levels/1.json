@@ -22,7 +22,7 @@
                 {
                  "height":0,
                  "id":1,
-                 "name":"Worm{len=4,dir=(1,0)}",
+                 "name":"Worm{len=4,dir=(1,0),dirt=3,bombs=4}",
                  "point":true,
                  "rotation":0,
                  "type":"",
@@ -50,7 +50,7 @@
          "y":0
         }],
  "nextlayerid":3,
- "nextobjectid":3,
+ "nextobjectid":4,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.6.0",
