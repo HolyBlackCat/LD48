@@ -3,6 +3,8 @@
 #include "signals/connection.h"
 #include "utils/json.h"
 
+constexpr std::string_view game_version = "v1.0";
+
 SIMPLE_STRUCT( Atlas
     DECL(Graphics::TextureAtlas::Region)
         worm, tiles, vignette, panel, button, button_icons, button_subscripts, cursor, mouse_pointer, bug, hint_arrow
@@ -97,6 +99,14 @@ namespace Sounds
     ADD_SOUND(next_level, 0.2)
 
     #undef ADD_SOUND
+
+    void SetListenerPos(ivec2 camera_pos)
+    {
+        int separation = screen_size.x * 2;
+        Audio::ListenerPosition(camera_pos.to_vec3(-separation));
+        Audio::ListenerOrientation(fvec3(0,0,1), fvec3(0,-1,0));
+        Audio::Source::DefaultRefDistance(separation);
+    }
 }
 
 namespace Music
@@ -159,7 +169,7 @@ namespace DebugInfo
     {
         if (!enabled)
             return;
-        r.itext(-screen_size/2, Graphics::Text(Fonts::main, FMT("TPS: {}\nFPS: {}\n[F1] to hide this.", fps_counter.Tps(), fps_counter.Fps()))).align(fvec2(-1)).color(fvec3(1)).alpha(0.5);
+        r.itext(-screen_size/2, Graphics::Text(Fonts::main, FMT("TPS: {}\nFPS: {}\nPress [F1] to hide this", fps_counter.Tps(), fps_counter.Fps()))).align(fvec2(-1)).color(fvec3(1)).alpha(0.5);
     }
 }
 
@@ -1635,12 +1645,8 @@ struct World
             map.global_time++;
         }
 
-        { // Listener pos.
-            int separation = screen_size.x * 2;
-            Audio::ListenerPosition(camera_pos.to_vec3(-separation));
-            Audio::ListenerOrientation(fvec3(0,0,1), fvec3(0,-1,0));
-            Audio::Source::DefaultRefDistance(separation);
-        }
+        // Listener pos.
+        Sounds::SetListenerPos(camera_pos);
 
         // Particles.
         par.Tick();
@@ -2113,6 +2119,8 @@ namespace States
 
         Menu()
         {
+            Sounds::SetListenerPos(ivec2(0));
+
             Draw::InitAtlas();
             progress = Progress::Load();
             clamp_var_max(progress.level, Map::GetLevelCount());
@@ -2126,7 +2134,7 @@ namespace States
             // The X pos of the +/- buttons.
             int plus_minus_pos_x = continue_string_w / 2 + plus_minus_spacing;
 
-            int pos_y = 0;
+            int pos_y = 12;
             if (cont_level > 0)
             {
                 // "Continue" buttons, if needed.
@@ -2152,24 +2160,33 @@ namespace States
                     if (cont->b_continue.IsClicked())
                     {
                         target_level_index = cont_level - 1;
+                        Sounds::click(mouse.pos());
                     }
-                    if (cont->b_minus.IsClicked())
+                    if ((cont->b_minus.IsClicked() || mouse.wheel_down.pressed()) && cont_level > 1)
                     {
-                        clamp_var_min(--cont_level, 1);
+                        cont_level--;
                         cont->b_continue.SetText(GetContinueString(cont_level));
+                        Sounds::click(mouse.pos());
                     }
-                    if (cont->b_plus.IsClicked())
+                    if ((cont->b_plus.IsClicked() || mouse.wheel_up.pressed()) && cont_level < progress.level)
                     {
-                        clamp_var_max(++cont_level, progress.level);
+                        cont_level++;
                         cont->b_continue.SetText(GetContinueString(cont_level));
+                        Sounds::click(mouse.pos());
                     }
                 }
 
                 if (b_new_game.IsClicked())
+                {
                     target_level_index = 0;
+                    Sounds::click(mouse.pos());
+                }
 
                 if (b_quit.IsClicked())
+                {
                     Program::Exit();
+                    Sounds::click(mouse.pos());
+                }
             }
             else
             {
@@ -2202,6 +2219,10 @@ namespace States
 
             constexpr std::string_view info_string = "Press [M] at any time to mute music.\nA game by HolyBlackCat for Ludum dare #48, Apr 2021.";
             r.itext(ivec2(0, screen_size.y / 2), Graphics::Text(Fonts::main, info_string)).color(fvec3(1)).alpha(0.3).align(ivec2(0,1));
+
+            r.itext(ivec2(screen_size.x / 2 - 2, -screen_size.y / 2), Graphics::Text(Fonts::main, game_version)).color(fvec3(1)).alpha(0.3).align(ivec2(1,-1));
+
+            r.itext(ivec2(0, -56), Graphics::Text(Fonts::main, "E A R T H W Y R M")).color(fvec3(109, 212, 12) / 255);
 
             Draw::MousePointer();
 

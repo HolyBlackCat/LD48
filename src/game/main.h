@@ -1,7 +1,7 @@
 #pragma once
 
 constexpr ivec2 screen_size = ivec2(480, 270);
-constexpr std::string_view window_name = "Ludum dare 48";
+constexpr std::string_view window_name = "EARTHWYRM";
 
 extern Interface::Window window;
 extern Graphics::ShaderConfig shader_config;

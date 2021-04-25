@@ -124,6 +124,10 @@ struct ProgramState : Program::DefaultBasicState
 
         mouse.HideCursor();
 
+        #ifdef NDEBUG
+        window.SetMode(fullscreen_mode);
+        #endif
+
         state_manager.NextState().Set("Menu"); // Start from the menu.
         // state_manager.NextState().Set("Game", "-1"); // Start from the last level.
     }
