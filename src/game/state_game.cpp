@@ -1,10 +1,11 @@
 #include "game/main.h"
 #include "gameutils/tiled_map.h"
+#include "signals/connection.h"
 #include "utils/json.h"
 
 SIMPLE_STRUCT( Atlas
     DECL(Graphics::TextureAtlas::Region)
-        worm, tiles, vignette
+        worm, tiles, vignette, panel, button, button_icons
 )
 static Atlas atlas;
 
@@ -43,6 +44,17 @@ namespace Draw
                 r.iquad(pos + mod_ex(clamp_max(shift, 0), region.main.size), shift_reg->region(mod_ex(-clamp_min(shift, 0), region.main.size), abs(shift) + (1 - abs(sign(shift))) * region.main.size)).alpha(alpha).beta(beta);
         }
     }
+
+    void Tooltip(std::string_view str)
+    {
+        constexpr int spacing = 4;
+        constexpr ivec2 bg_padding(2, 0);
+        ivec2 pos(0, screen_size.y / 2 - atlas.panel.size.y - spacing);
+        Graphics::Text text(Fonts::main, str);
+        ivec2 text_size = text.ComputeStats().size;
+        r.iquad(pos - bg_padding - text_size with(x /= 2), text_size + bg_padding * 2).color(fvec3(0)).alpha(0.75);
+        r.itext(pos, text).align(fvec2(0,1)).color(fvec3(1));
+    }
 }
 
 namespace Sounds
@@ -59,8 +71,160 @@ namespace Sounds
 
     ADD_SOUND(dirt_breaks, 0.5)
     ADD_SOUND(landing, 0.2)
+    ADD_SOUND(click, 0.03)
+    ADD_SOUND(player_dies, 0.1)
 
     #undef ADD_SOUND
+}
+
+namespace Gui
+{
+    class ButtonList;
+
+    struct Button
+    {
+        Sig::Connection<Button, ButtonList> con;
+
+        int icon_index = 0;
+        std::string tooltip = 0;
+        int hover_timer = 0;
+
+        Button() {}
+        Button(int icon_index, std::string tooltip) : icon_index(icon_index), tooltip(std::move(tooltip)) {}
+
+        ivec2 pos{};
+
+        static int Size()
+        {
+            return atlas.button.size.y;
+        }
+        static int SideDecoW()
+        {
+            static int ret = atlas.button.size.x % atlas.button.size.y;
+            return ret;
+        }
+
+        virtual int GetIconIndex() const
+        {
+            return icon_index;
+        }
+
+        bool IsHovered() const
+        {
+            return (mouse.pos() >= pos).all() && (mouse.pos() < pos + Size()).all();
+        }
+
+        bool IsClicked() const
+        {
+            return mouse.left.released() && IsHovered();
+        }
+
+        virtual void Tick()
+        {
+            if (IsClicked())
+                Click();
+
+            if (IsHovered())
+                clamp_var_max(++hover_timer, 1000);
+            else
+                hover_timer = 0;
+        }
+
+        virtual void Click()
+        {
+            Sounds::click(mouse.pos());
+        }
+
+        virtual void Draw() const
+        {
+            int state = IsHovered() ? (mouse.left.down() ? 2 : 1) : 0;
+            r.iquad(pos, atlas.button.region(ivec2(SideDecoW() + Button::Size() * state, 0), ivec2(Button::Size())));
+            r.iquad(pos, atlas.button_icons.region(ivec2(Button::Size() * GetIconIndex(), 0), ivec2(Button::Size()))).alpha(state == 2 ? 0.75 : 1);
+            if (hover_timer > 30)
+                Draw::Tooltip(tooltip);
+        }
+    };
+
+    struct Checkbox : Button
+    {
+        int enabled_icon_index = 0;
+        bool enabled = false;
+        Checkbox() {}
+        Checkbox(int icon_index, int enabled_icon_index, bool enabled, std::string tooltip) : Button(icon_index, std::move(tooltip)), enabled_icon_index(enabled_icon_index), enabled(enabled) {}
+
+        int GetIconIndex() const override
+        {
+            return enabled ? enabled_icon_index : icon_index;
+        }
+
+        void Click() override
+        {
+            Button::Click();
+            enabled = !enabled;
+        }
+    };
+
+    struct StickyButton : Button
+    {
+        using Button::Button;
+
+        bool was_clicked = false;
+        void Click() override
+        {
+            Button::Click();
+            was_clicked = true;
+        }
+    };
+
+    class ButtonList
+    {
+      public:
+        int x = 0;
+        float align = 0;
+
+        Sig::ConnectionList<ButtonList, Button> con;
+
+        ButtonList() {}
+        ButtonList(int x, float align, const std::vector<Button *> &buttons)
+            : x(x), align(align)
+        {
+            for (Button *button : buttons)
+                Sig::Bind<&Button::con, &ButtonList::con>(*button, *this);
+
+        }
+
+        size_t NumButtons() const
+        {
+            return con.Size();
+        }
+
+        ivec2 CalcFirstButtonPos() const
+        {
+            return ivec2(x - NumButtons() * Button::Size() * (align * 0.5 + 0.5), screen_size.y / 2 - Button::Size());
+        }
+
+        void Tick()
+        {
+            ivec2 first_pos = CalcFirstButtonPos();
+            for (size_t i = 0; i < NumButtons(); i++)
+            {
+                con[i]->pos = first_pos with(x += Button::Size() * i);
+                con[i]->Tick();
+            }
+        }
+
+        void Draw() const
+        {
+            ivec2 pos = CalcFirstButtonPos();
+
+            // Side decorations.
+            r.iquad(pos with(x -= Button::SideDecoW()), atlas.button.region(ivec2(0), ivec2(Button::SideDecoW(), atlas.button.size.y)));
+            r.iquad(pos with(x += NumButtons() * Button::Size()), atlas.button.region(ivec2(0), ivec2(Button::SideDecoW(), atlas.button.size.y))).flip_x();
+
+            for (size_t i = 0; i < NumButtons(); i++)
+                con[i]->Draw();
+        }
+    };
 }
 
 struct Particle
@@ -184,7 +348,7 @@ struct ParticleController
             pa.Draw(viewport_center, viewport_size);
     }
 
-    static Particle ParticleDirt(fvec2 pos, fvec2 vel, float min_size, float max_size, int max_time )
+    static Particle ParticleDirt(fvec2 pos, fvec2 vel, float min_size, float max_size, int max_time)
     {
         float p = 0 <= randomize.real() <= 1;
         return adjust(Particle{}
@@ -195,6 +359,23 @@ struct ParticleController
             , damp = mix(p, 0.01, 0.03)
             , p.size = mix(p, max_size, min_size)
             , p.color = (std::array{fvec3(139, 90, 60) / 255, fvec3(101, 62, 41) / 255, fvec3(159, 111, 56) / 255}[randomize.integer() < 3] * float(0.9 <= randomize.real() <= 1.1))
+            , p1 = _object_.p
+            , p1->t = _object_.max_time
+            , p1->size = 0
+        );
+    }
+
+    static Particle ParticleBlood(fvec2 pos, fvec2 vel, float min_size, float max_size, int max_time)
+    {
+        float p = 0 <= randomize.real() <= 1;
+        return adjust(Particle{}
+            , pos = pos
+            , vel = vel
+            , acc = fvec2(0,0.05)
+            , max_time = max_time
+            , damp = mix(p, 0.01, 0.03)
+            , p.size = mix(p, max_size, min_size)
+            , p.color = fvec3(0.4 <= randomize.real() <= 1, 0, 0)
             , p1 = _object_.p
             , p1->t = _object_.max_time
             , p1->size = 0
@@ -221,6 +402,18 @@ struct ParticleController
                 center_pos + fvec2(-area.x/2 <= randomize.real() <= area.x/2, -area.y/2 <= randomize.real() <= area.y/2),
                 fvec2::dir(randomize.angle(), 0 <= randomize.real() <= 1),
                 2, 6, 20 <= randomize.integer() <= 40)
+            );
+        }
+    }
+
+    void EffectBloodExplosion(fvec2 center_pos, fvec2 area, int n = 5)
+    {
+        while (n-- > 0)
+        {
+            particles.push_back(ParticleBlood(
+                center_pos + fvec2(-area.x/2 <= randomize.real() <= area.x/2, -area.y/2 <= randomize.real() <= area.y/2),
+                fvec2::dir(randomize.angle(), 0 <= randomize.real() <= 2),
+                2, 16, 45 <= randomize.integer() <= 90)
             );
         }
     }
@@ -290,6 +483,7 @@ class Map
         dirt,
         pipe,
         wall,
+        spike,
         _count,
     };
 
@@ -301,15 +495,17 @@ class Map
         int tile_index = -1;
         bool breakable = true;
         int path_priority = 0; // Worm prefers tiles with a higher value. 0 means it will refuse to go there.
+        bool kills = false;
     };
 
     // Tile properties table.
     inline static const TileInfo tile_info[] =
     {
-        /* air  */ {.renderer = TileRenderer::simple, .tile_index = -1, .breakable = false, .path_priority = 99},
-        /* dirt */ {.renderer = TileRenderer::fancy , .tile_index =  0, .breakable = true , .path_priority =  9},
-        /* pipe */ {.renderer = TileRenderer::pipe  , .tile_index =  1, .breakable = false, .path_priority =  0},
-        /* wall */ {.renderer = TileRenderer::pipe  , .tile_index =  2, .breakable = false, .path_priority =  0},
+        /* air   */ {.renderer = TileRenderer::simple, .tile_index = -1, .breakable = false, .path_priority = 99, .kills = false},
+        /* dirt  */ {.renderer = TileRenderer::fancy , .tile_index =  0, .breakable = true , .path_priority =  9, .kills = false},
+        /* pipe  */ {.renderer = TileRenderer::pipe  , .tile_index =  1, .breakable = false, .path_priority =  0, .kills = false},
+        /* wall  */ {.renderer = TileRenderer::pipe  , .tile_index =  2, .breakable = false, .path_priority =  0, .kills = false},
+        /* spike */ {.renderer = TileRenderer::pipe  , .tile_index =  3, .breakable = false, .path_priority =  9, .kills = true },
     };
     static_assert(std::size(tile_info) == size_t(Tile::_count));
 
@@ -322,8 +518,12 @@ class Map
     // Tile merging rules.
     static bool ShouldMergeWith(Tile a, Tile b)
     {
+        if (a == Tile::spike)
+            return b != Tile::spike && b != Tile::air;
+
         if (a == b)
             return true;
+
         if (a == Tile::dirt && b == Tile::wall)
             return true;
         return false;
@@ -550,6 +750,7 @@ struct Worm
     float fall_offset = 0;
     float fall_speed = 0;
     bool dead = false;
+    int death_timer = 0;
 
     ivec2 ChooseDirection(const Map &map) const
     {
@@ -579,8 +780,6 @@ struct Worm
         auto p_left = GetPathPriority(segments.back() + current_dir.rot90(-1));
         auto p_right = GetPathPriority(segments.back() + current_dir.rot90(1));
 
-        // Refuse to go up without any support.
-
         // Stop if nowhere to go.
         if (max(p_fwd, p_left, p_right) <= 0)
             return ivec2();
@@ -596,15 +795,55 @@ struct Worm
             return current_dir.rot90(1);
     }
 
-    void Tick(Map &map, ParticleController &par)
+    void Tick(Map &map, ParticleController &par, bool unpaused)
     {
+        // Death conditions.
+        if (!dead)
+        {
+            // Spikes.
+            for (ivec2 seg : segments)
+            {
+                if (map.InfoAt(seg).kills)
+                {
+                    dead = true;
+                    break;
+                }
+            }
+
+            // Death animation.
+            if (dead)
+            {
+                for (ivec2 seg : segments)
+                    par.EffectBloodExplosion(seg * tile_size + tile_size/2, fvec2(tile_size));
+
+                Sounds::player_dies(segments[segments.size() / 2] * tile_size + tile_size / 2);
+            }
+        }
+
+        // Stop if dead.
+        if (dead)
+        {
+            clamp_var_max(++death_timer, 1000);
+            return;
+        }
+
+        // Stop if paused.
+        if (!unpaused)
+            return;
+
         bool on_ground = false;
         std::vector<unsigned char> supported_segments(segments.size());
         { // Check if the worm is supported by the ground.
+            auto TileIsSolid = [&](ivec2 pos)
+            {
+                const Map::TileInfo &data = map.InfoAt(pos);
+                return data.path_priority < 99 && !data.kills;
+            };
+
             std::optional<ivec2> prev_delta, next_delta;
             for (size_t i = 0; i < segments.size(); i++) LOOP_NAME(ground)
             {
-                if (map.InfoAt(segments[i] with(y++)).path_priority < 99)
+                if (TileIsSolid(segments[i] with(y++)))
                 {
                     on_ground = true;
                     supported_segments[i] = true;
@@ -621,7 +860,7 @@ struct Worm
                     for (int s : {-1, 1})
                     {
                         ivec2 offset = (*delta_ptr)->rot90(s);
-                        if (offset != ivec2(0,-1) && map.InfoAt(segments[i] + offset).path_priority < 99)
+                        if (offset != ivec2(0,-1) && TileIsSolid(segments[i] + offset))
                         {
                             on_ground = true;
                             supported_segments[i] = true;
@@ -703,6 +942,10 @@ struct Worm
 
     void Draw(ivec2 camera_pos) const
     {
+        float alpha = clamp_min(1 - death_timer / 45.f);
+        if (alpha <= 0)
+            return;
+
         std::optional<ivec2> prev_delta, next_delta;
         for (size_t i = 0; i < segments.size(); i++)
         {
@@ -719,7 +962,7 @@ struct Worm
             if (!prev_delta && !next_delta)
             {
                 // This shouldn't happen, draw a placeholder.
-                r.iquad(base_pos, region);
+                r.iquad(base_pos, region).alpha(alpha);
             }
             else if (!prev_delta && next_delta)
             {
@@ -742,7 +985,7 @@ struct Worm
                         straight_reg = atlas.worm.region(ivec2(1,0) * tile_size, ivec2(tile_size));
                 }
 
-                Draw::ShiftedTile(base_pos, {region, nullptr, &straight_reg, (*next_delta < 0).any(), true}, *next_delta * crawl_offset);
+                Draw::ShiftedTile(base_pos, {region, nullptr, &straight_reg, (*next_delta < 0).any(), true}, *next_delta * crawl_offset, alpha);
             }
             else if (prev_delta && !next_delta)
             {
@@ -765,7 +1008,7 @@ struct Worm
                         straight_reg = atlas.worm.region(ivec2(1,0) * tile_size, ivec2(tile_size));
                 }
 
-                Draw::ShiftedTile(base_pos, {region, &straight_reg, nullptr, (*prev_delta < 0).any(), true}, *prev_delta * crawl_offset);
+                Draw::ShiftedTile(base_pos, {region, &straight_reg, nullptr, (*prev_delta < 0).any(), true}, *prev_delta * crawl_offset, alpha);
             }
             else if (*prev_delta == *next_delta)
             {
@@ -775,7 +1018,7 @@ struct Worm
                 else
                     region = region.region(ivec2(1,0) * tile_size, ivec2(tile_size));
 
-                Draw::ShiftedTile(base_pos, {region, i == 1 ? nullptr : &region, i == segments.size() - 2 ? nullptr : &region, (*prev_delta < 0).any() }, *next_delta * crawl_offset);
+                Draw::ShiftedTile(base_pos, {region, i == 1 ? nullptr : &region, i == segments.size() - 2 ? nullptr : &region, (*prev_delta < 0).any() }, *next_delta * crawl_offset, alpha);
             }
             else
             {
@@ -789,7 +1032,7 @@ struct Worm
                     region = region.region(ivec2(2,1) * tile_size, ivec2(tile_size));
                 else
                     region = region.region(ivec2(3,1) * tile_size, ivec2(tile_size));
-                r.iquad(base_pos, region);
+                r.iquad(base_pos, region).alpha(alpha);
             }
         }
     }
@@ -812,16 +1055,21 @@ struct World
     Worm worm;
     Map map;
     ParticleController par;
-    bool running = false;
-    int speed_factor = 2;
     ivec2 camera_pos;
 
     float fade_in = 1;
     float fade_out = 0;
 
+    inline static Gui::StickyButton button_restart = {0, "[R] Restart level"};
+    inline static Gui::Checkbox checkbox_pause = {2, 1, true, "[Space] Play/pause"};
+    inline static Gui::Checkbox checkbox_halfspeed = {3, 4, false, "[Tab] Change game speed"};
+    inline static Gui::ButtonList buttons_mid = Gui::ButtonList(-screen_size.x / 2, -1, {&button_restart, &checkbox_halfspeed, &checkbox_pause});
+
     bool ShouldFadeOut() const
     {
-        if (worm.dead)
+        if (button_restart.was_clicked)
+            return true; // Manual restart.
+        if (worm.dead && worm.death_timer > 60)
             return true; // Death.
         if (!worm.segments.empty() && worm.segments.front() == map.data.exit_pos)
             return true; // Win condition.
@@ -831,43 +1079,47 @@ struct World
     std::optional<int> ShouldChangeLevel()
     {
         if (ShouldFadeOut() && fade_out >= 1)
-            return worm.dead ? map.level_index : map.level_index + 1;
+            return worm.dead || button_restart.was_clicked ? map.level_index : map.level_index + 1;
         return {};
     }
 
     void Tick()
     {
         // The logic affected by game speed.
-        for (int i = 0; i < speed_factor; i++)
+        for (int i = 0; i < (checkbox_halfspeed.enabled ? 1 : 2); i++)
         {
             { // Worm
-                if (running)
-                    worm.Tick(map, par);
+                worm.Tick(map, par, !checkbox_pause.enabled);
             }
 
             // Camera pos.
             camera_pos = map.tiles.size() * tile_size / 2;
 
-            { // Listener pos.
-                int separation = screen_size.x * 2;
-                Audio::ListenerPosition(camera_pos.to_vec3(-separation));
-                Audio::ListenerOrientation(fvec3(0,0,1), fvec3(0,-1,0));
-                Audio::Source::DefaultRefDistance(separation);
-            }
-
             // Global timer.
             map.global_time++;
+        }
+
+        { // Listener pos.
+            int separation = screen_size.x * 2;
+            Audio::ListenerPosition(camera_pos.to_vec3(-separation));
+            Audio::ListenerOrientation(fvec3(0,0,1), fvec3(0,-1,0));
+            Audio::Source::DefaultRefDistance(separation);
         }
 
         // Particles.
         par.Tick();
 
         { // Gui.
+            if (!ShouldFadeOut())
+            {
+                buttons_mid.Tick();
+            }
+
             if (Controls::PausePressed())
-                running = !running;
+                checkbox_pause.Click();
 
             if (Controls::ToggleSpeedPressed())
-                speed_factor = speed_factor > 1 ? 1 : 2;
+                checkbox_halfspeed.Click();
         }
 
         { // Fade.
@@ -884,7 +1136,10 @@ struct World
         map.render(camera_pos, screen_size);
         par.Render(camera_pos, screen_size);
 
-        r.itext(-screen_size/2, Graphics::Text(Fonts::main, FMT("{}, speed={}", running ? "Running" : "Paused", speed_factor))).align(ivec2(-1));
+        { // Gui.
+            r.iquad(ivec2(0, screen_size.y / 2), ivec2(screen_size.x, atlas.panel.size.y)).tex(atlas.panel.pos, atlas.panel.size).center(fvec2(0.5, atlas.panel.size.y));
+            buttons_mid.Draw();
+        }
 
         // Fade.
         if (float fade = max(fade_in, fade_out); fade > 0)
@@ -913,6 +1168,8 @@ namespace States
 
         void ReloadCurrentMap()
         {
+            w.checkbox_pause.enabled = true;
+            w.button_restart.was_clicked = false;
             w = World{};
             w.map = map_backup;
             for (int i = 0; i < w.map.data.worm_starting_len; i++)
