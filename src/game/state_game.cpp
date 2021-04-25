@@ -5,7 +5,7 @@
 
 SIMPLE_STRUCT( Atlas
     DECL(Graphics::TextureAtlas::Region)
-        worm, tiles, vignette, panel, button, button_icons, button_subscripts, cursor
+        worm, tiles, vignette, panel, button, button_icons, button_subscripts, cursor, mouse_pointer
 )
 static Atlas atlas;
 
@@ -64,6 +64,12 @@ namespace Draw
             once = false;
             texture_atlas.InitRegions(atlas, ".png");
         }
+    }
+
+    void MousePointer()
+    {
+        if (window.HasMouseFocus())
+            r.iquad(mouse.pos(), atlas.mouse_pointer).center();
     }
 }
 
@@ -1542,6 +1548,9 @@ struct World
         if (fade > 0)
             r.iquad(ivec2(0), screen_size).center().color(fvec3(0)).alpha(smoothstep(clamp(fade)));
 
+        // Vignette.
+        r.iquad(ivec2(0), atlas.vignette).center();
+
         { // Gui panel.
             // Panel background.
             r.iquad(ivec2(0, screen_size.y / 2), ivec2(screen_size.x, atlas.panel.size.y)).tex(atlas.panel.pos, atlas.panel.size).center(fvec2(0.5, atlas.panel.size.y));
@@ -1561,8 +1570,8 @@ struct World
             }
         }
 
-        // Vignette.
-        r.iquad(ivec2(0), atlas.vignette).center();
+        // Mouse pointer.
+        Draw::MousePointer();
     }
 };
 

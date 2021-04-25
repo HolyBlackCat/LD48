@@ -10,7 +10,7 @@
         ),
         (
             "button_subscripts.png",
-            ((1354, 0), (110, 11)),
+            ((1379, 0), (110, 11)),
         ),
         (
             "cursor.png",
@@ -19,6 +19,10 @@
         (
             "font_storage.png",
             ((481, 0), (256, 256)),
+        ),
+        (
+            "mouse_pointer.png",
+            ((1354, 0), (24, 24)),
         ),
         (
             "panel.png",

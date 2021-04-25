@@ -9,7 +9,7 @@ static Audio::Context context = nullptr;
 Audio::SourceManager audio_manager;
 
 Graphics::ShaderConfig shader_config = Graphics::ShaderConfig::Core();
-static Interface::ImGuiController gui_controller(Poly::derived<Interface::ImGuiController::GraphicsBackend_Modern>, adjust_(Interface::ImGuiController::Config{}, shader_header = shader_config.common_header, store_state_in_file = ""));
+// static Interface::ImGuiController gui_controller(Poly::derived<Interface::ImGuiController::GraphicsBackend_Modern>, adjust_(Interface::ImGuiController::Config{}, shader_header = shader_config.common_header, store_state_in_file = ""));
 
 namespace Fonts
 {
@@ -73,8 +73,8 @@ struct ProgramState : Program::DefaultBasicState
 
     void Tick() override
     {
-        // window.ProcessEvents();
-        window.ProcessEvents({gui_controller.EventHook()});
+        window.ProcessEvents();
+        // window.ProcessEvents({gui_controller.EventHook()});
 
         if (window.Resized())
         {
@@ -87,19 +87,19 @@ struct ProgramState : Program::DefaultBasicState
         if ((Input::Button(Input::l_alt).down() || Input::Button(Input::r_alt).down()) && Input::Button(Input::enter).pressed())
             window.SetMode(window.Mode() == Interface::windowed ? fullscreen_mode : Interface::windowed);
 
-        gui_controller.PreTick();
+        // gui_controller.PreTick();
         state_manager.Tick();
         audio_manager.Tick();
     }
 
     void Render() override
     {
-        gui_controller.PreRender();
+        // gui_controller.PreRender();
         adaptive_viewport.BeginFrame();
         state_manager.Render();
         adaptive_viewport.FinishFrame();
         Graphics::CheckErrors();
-        gui_controller.PostRender();
+        // gui_controller.PostRender();
 
         window.SwapBuffers();
     }
@@ -107,19 +107,21 @@ struct ProgramState : Program::DefaultBasicState
 
     void Init()
     {
-        ImGui::StyleColorsDark();
+        // ImGui::StyleColorsDark();
 
-        // Load various small fonts
-        auto monochrome_font_flags = ImGuiFreeTypeBuilderFlags_LightHinting;
+        // // Load various small fonts
+        // auto monochrome_font_flags = ImGuiFreeTypeBuilderFlags_LightHinting;
 
-        gui_controller.LoadFont("assets/CatIV15.ttf", 15.0f, adjust(ImFontConfig{}, FontBuilderFlags = monochrome_font_flags));
-        gui_controller.LoadDefaultFont();
-        gui_controller.RenderFontsWithFreetype();
+        // gui_controller.LoadFont("assets/CatIV15.ttf", 15.0f, adjust(ImFontConfig{}, FontBuilderFlags = monochrome_font_flags));
+        // gui_controller.LoadDefaultFont();
+        // gui_controller.RenderFontsWithFreetype();
 
         Audio::LoadMentionedFiles(Audio::LoadFromPrefixWithExt("assets/sounds/"), Audio::mono, Audio::wav);
 
         Graphics::Blending::Enable();
         Graphics::Blending::FuncNormalPre();
+
+        mouse.HideCursor();
 
         state_manager.NextState().Set("Game");
     }
