@@ -821,9 +821,9 @@ class Map
     static bool ShouldMergeWith(Tile a, Tile b)
     {
         if (a == Tile::spike)
-            return b != Tile::spike && b != Tile::air;
+            return b != Tile::spike && b != Tile::air && b != Tile::bait;
         if (a == Tile::floating_spike)
-            return b != Tile::air;
+            return b != Tile::air && b != Tile::bait;
 
         if (a == b)
             return true;
@@ -1329,10 +1329,6 @@ struct Worm
                                 }
                             }
                         }
-
-                        // Check if out of bounds.
-                        if (!map.tiles.pos_in_range(segments.back()))
-                            out_of_bounds = true;
                     }
                     else
                     {
@@ -1343,6 +1339,10 @@ struct Worm
                     crawl_offset++;
             }
         }
+
+        // Check if out of bounds.
+        if (!map.tiles.pos_in_range(segments.back()))
+            out_of_bounds = true;
     }
 
     void Draw(ivec2 camera_pos) const

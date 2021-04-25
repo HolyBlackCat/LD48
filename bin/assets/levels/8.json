@@ -22,7 +22,7 @@
                 {
                  "height":0,
                  "id":1,
-                 "name":"Start{name=\"Weird pipe\",len=5,dir=down,bombs=2}",
+                 "name":"Start{name=\"Broken pipe\",len=5,dir=down,bombs=2}",
                  "point":true,
                  "rotation":0,
                  "type":"",

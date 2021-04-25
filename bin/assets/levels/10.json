@@ -22,7 +22,7 @@
                 {
                  "height":0,
                  "id":1,
-                 "name":"Start{name=\"Suspension\",len=5,dir=up,bombs=0,dirt=9}",
+                 "name":"Start{name=\"Suspension\",len=5,dir=up,bombs=0,dirt=8}",
                  "point":true,
                  "rotation":0,
                  "type":"",

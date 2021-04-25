@@ -22,7 +22,7 @@
                 {
                  "height":0,
                  "id":1,
-                 "name":"Start{name=\"Timing\",len=3,dir=right,rev=2}",
+                 "name":"Start{name=\"Phase\",len=3,dir=right,rev=1}",
                  "point":true,
                  "rotation":0,
                  "type":"",
