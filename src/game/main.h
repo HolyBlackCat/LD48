@@ -27,3 +27,5 @@ extern Render r;
 extern Input::Mouse mouse;
 
 extern Random<> randomize;
+
+extern GameUtils::FpsCounter fps_counter;

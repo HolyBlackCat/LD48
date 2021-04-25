@@ -42,10 +42,11 @@ Input::Mouse mouse;
 
 Random<> randomize(std::random_device{}());
 
+GameUtils::FpsCounter fps_counter;
+
 struct ProgramState : Program::DefaultBasicState
 {
     GameUtils::State::StateManager state_manager;
-    GameUtils::FpsCounter fps_counter;
 
     void Resize()
     {
@@ -68,7 +69,7 @@ struct ProgramState : Program::DefaultBasicState
     void EndFrame() override
     {
         fps_counter.Update();
-        window.SetTitle(STR((window_name), " TPS:", (fps_counter.Tps()), " FPS:", (fps_counter.Fps())));
+        // window.SetTitle(STR((window_name), " TPS:", (fps_counter.Tps()), " FPS:", (fps_counter.Fps())));
     }
 
     void Tick() override
@@ -123,7 +124,7 @@ struct ProgramState : Program::DefaultBasicState
 
         mouse.HideCursor();
 
-        state_manager.NextState().Set("Game");
+        state_manager.NextState().Set("Menu");
     }
 };
 

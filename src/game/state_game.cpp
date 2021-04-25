@@ -99,6 +99,70 @@ namespace Sounds
     #undef ADD_SOUND
 }
 
+namespace Music
+{
+    Audio::Buffer buffer;
+    Audio::Source source;
+
+    bool enabled = true;
+
+    void StartOnce()
+    {
+        static bool once = true;
+        if (once)
+        {
+            once = false;
+            buffer = Audio::Sound(Audio::ogg, Audio::stereo, "assets/theme.ogg");
+            source = buffer;
+            source.volume(2.5);
+            source.loop();
+            if (enabled)
+                source.play();
+        }
+    }
+
+    void Toggle()
+    {
+        enabled = !enabled;
+        if (source)
+        {
+            if (enabled)
+                source.play();
+            else
+                source.pause();
+        }
+    }
+
+    void ToggleIfHotkeyPressed()
+    {
+        if (Input::Button(Input::m).pressed())
+            Toggle();
+    }
+}
+
+namespace DebugInfo
+{
+    static bool enabled =
+        #ifdef NDEBUG
+        false;
+        #else
+        true;
+        #endif
+
+    void Tick()
+    {
+        if (Input::Button(Input::f1).pressed())
+            enabled = !enabled;
+    }
+
+    void Render()
+    {
+        if (!enabled)
+            return;
+        r.itext(-screen_size/2, Graphics::Text(Fonts::main, FMT("TPS: {}\nFPS: {}\n[F1] to hide this.", fps_counter.Tps(), fps_counter.Fps()))).align(fvec2(-1)).color(fvec3(1)).alpha(0.5);
+    }
+}
+
 namespace Gui
 {
     class ButtonList;
@@ -1873,6 +1937,7 @@ namespace States
         Game()
         {
             Draw::InitAtlas();
+            Music::StartOnce();
         }
 
         void Init(const std::string &params) override
@@ -1896,6 +1961,11 @@ namespace States
                 else
                     next_state.Set("Final");
             }
+
+            // Toggle music.
+            Music::ToggleIfHotkeyPressed();
+
+            DebugInfo::Tick();
         }
 
         void Render() const override
@@ -1907,6 +1977,7 @@ namespace States
 
             w.Render();
 
+            DebugInfo::Render();
             r.Finish();
         }
     };
@@ -2043,6 +2114,10 @@ namespace States
                 clamp_var_max(fade += 0.025);
             }
 
+            // Toggle music.
+            Music::ToggleIfHotkeyPressed();
+
+            DebugInfo::Tick();
         }
 
         void Render() const override
@@ -2061,11 +2136,15 @@ namespace States
             b_new_game.Draw();
             b_quit.Draw();
 
+            constexpr std::string_view info_string = "Press [M] at any time to mute music.\nA game by HolyBlackCat for Ludum dare #48, Apr 2021.";
+            r.itext(ivec2(0, screen_size.y / 2), Graphics::Text(Fonts::main, info_string)).color(fvec3(1)).alpha(0.3).align(ivec2(0,1));
+
             Draw::MousePointer();
 
             if (fade > 0)
                 r.iquad(ivec2(0), screen_size).center().color(fvec3(0)).alpha(smoothstep(fade));
 
+            DebugInfo::Render();
             r.Finish();
         }
     };
@@ -2081,6 +2160,7 @@ namespace States
         Final()
         {
             Draw::InitAtlas();
+            Music::StartOnce();
         }
 
         void Tick(const GameUtils::State::NextStateSelector &next_state) override
@@ -2090,6 +2170,11 @@ namespace States
                 Program::Exit();
 
             time++;
+
+            // Toggle music.
+            Music::ToggleIfHotkeyPressed();
+
+            DebugInfo::Tick();
         }
 
         void Render() const override
@@ -2124,6 +2209,7 @@ namespace States
             r.itext(ivec2(0,y_offset - 32), Graphics::Text(Fonts::main, "That's all!")).alpha(smoothstep(clamp(Math::linear_mapping<float>(t1, t1 + text_anim_len, 0, 1)(time))));
             r.itext(ivec2(0,y_offset + 32), Graphics::Text(Fonts::main, "Thanks for playing my game")).alpha(smoothstep(clamp(Math::linear_mapping<float>(t2, t2 + text_anim_len, 0, 1)(time))));
 
+            DebugInfo::Render();
             r.Finish();
         }
     };
