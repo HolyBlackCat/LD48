@@ -22,7 +22,7 @@
                 {
                  "height":0,
                  "id":1,
-                 "name":"Worm{len=4,dir=(1,0),dirt=3,bombs=4}",
+                 "name":"Start{name=\"Tutorial\",len=4,dir=(1,0),dirt=3,bombs=4,rev=3}",
                  "point":true,
                  "rotation":0,
                  "type":"",

@@ -75,6 +75,7 @@ namespace Sounds
     ADD_SOUND(click, 0.03)
     ADD_SOUND(player_dies, 0.1)
     ADD_SOUND(explosion, 0.2)
+    ADD_SOUND(reverse, 0.2)
 
     #undef ADD_SOUND
 }
@@ -91,8 +92,9 @@ namespace Gui
         std::string tooltip = 0;
         int hover_timer = 0;
 
+        bool force_blocked = false;
         std::optional<int> subscript;
-        virtual bool IsBlocked() const {return subscript && *subscript <= 0;}
+        virtual bool IsBlocked() const {return force_blocked || (subscript && *subscript <= 0);}
 
         Button() {}
         Button(int icon_index, std::string tooltip) : icon_index(icon_index), tooltip(std::move(tooltip)) {}
@@ -532,12 +534,15 @@ namespace MapPoints
         ivec2 worm_starting_dir{};
         int worm_starting_len = 4;
 
+        std::string level_name;
+
         bool exit_placed = false;
         ivec2 exit_pos{};
         ivec2 exit_dir{};
 
         int num_dirt = 0;
         int num_bombs = 0;
+        int num_reverses = 0;
     };
 
     STRUCT( Base POLYMORPHIC )
@@ -546,13 +551,15 @@ namespace MapPoints
         virtual void Process(State &state, ivec2 tile_pos) = 0;
     };
 
-    STRUCT( Worm EXTENDS Base )
+    STRUCT( Start EXTENDS Base )
     {
         MEMBERS(
+            DECL(std::string ATTR Refl::Optional) name
             DECL(int) len
             DECL(ivec2) dir
             DECL(int INIT=0 ATTR Refl::Optional) dirt
             DECL(int INIT=0 ATTR Refl::Optional) bombs
+            DECL(int INIT=0 ATTR Refl::Optional) rev
         )
 
         void Process(State &state, ivec2 tile_pos) override
@@ -561,11 +568,14 @@ namespace MapPoints
                 Program::Error("More than one worm.");
             state.worm_placed = true;
 
+            state.level_name = name;
+
             state.worm_starting_pos = tile_pos;
             state.worm_starting_dir = dir;
             state.worm_starting_len = len;
             state.num_dirt = dirt;
             state.num_bombs = bombs;
+            state.num_reverses = rev;
         }
     };
 
@@ -1184,9 +1194,10 @@ struct World
     inline static Gui::ButtonList buttons_game_control = Gui::ButtonList(-screen_size.x / 2, -1, {&button_restart, &checkbox_halfspeed, &checkbox_pause});
 
     inline static Gui::RadioButtonList radiobuttons_tools;
-    inline static Gui::RadioButton button_add_dirt = {6, radiobuttons_tools, "Add dirt"};
+    inline static Gui::RadioButton button_add_dirt = {6, radiobuttons_tools, "Create dirt"};
     inline static Gui::RadioButton button_bomb = {5, radiobuttons_tools, "Destroy object"};
-    inline static Gui::ButtonList buttons_tools = Gui::ButtonList(screen_size.x / 2, 1, {&button_add_dirt, &button_bomb});
+    inline static Gui::Button button_reverse = {7, "Reverse worm"};
+    inline static Gui::ButtonList buttons_tools = Gui::ButtonList(screen_size.x / 2, 1, {&button_add_dirt, &button_reverse, &button_bomb});
 
     inline static const std::vector<Gui::ButtonList *> buttonlists = {&buttons_game_control, &buttons_tools};
 
@@ -1241,6 +1252,21 @@ struct World
             // Update button subscripts.
             button_add_dirt.subscript = map.data.num_dirt;
             button_bomb.subscript = map.data.num_bombs;
+            button_reverse.subscript = map.data.num_reverses;
+
+            { // Button blocking conditions.
+                { // "Reverse worm" button.
+                    bool &block = button_reverse.force_blocked;
+                    block = false;
+
+                    if (!block && (worm.dead || worm.out_of_bounds))
+                        block = true; // Refuse to reverse if dead of out of bounds.
+                    if (!block && std::any_of(worm.segments.begin(), worm.segments.end(), [&](ivec2 seg){return seg == map.data.worm_starting_pos;}))
+                        block = true; // Refuse to reverse in the starting position.
+                    if (!block && std::any_of(worm.segments.begin(), worm.segments.end(), [&](ivec2 seg){return seg == map.data.exit_pos;}))
+                        block = true; // Refuse to reverse if touching the exit.
+                }
+            }
 
             // Button ticks.
             if (!ShouldFadeOut())
@@ -1275,7 +1301,7 @@ struct World
             }
         }
 
-        { // Clicking tiles.
+        { // Using tools.
             // Check if any tool is enabled.
             any_tool_enabled = false;
             for (size_t i = 0; i < radiobuttons_tools.con.Size(); i++)
@@ -1297,7 +1323,7 @@ struct World
                     hovered_tile_pos = {}; // Refuse to interact with a tile on the map border, or outside.
             }
 
-            // Specific tools.
+            // Specific tile-related tools.
             if (hovered_tile_pos)
             {
                 if (button_bomb.active)
@@ -1362,6 +1388,20 @@ struct World
                     }
                 }
             }
+
+            // Reverse worm.
+            if (button_reverse.IsClicked())
+            {
+                map.data.num_reverses--;
+                ivec2 midpoint = worm.segments[worm.segments.size() / 2];
+
+                std::reverse(worm.segments.begin(), worm.segments.end());
+
+                Sounds::reverse(midpoint * tile_size + tile_size / 2);
+
+                for (size_t i = 0; i < radiobuttons_tools.con.Size(); i++)
+                    radiobuttons_tools.con[i]->active = false;
+            }
         }
 
         { // Fade.
@@ -1400,7 +1440,8 @@ struct World
         }
 
         // Fade.
-        if (float fade = max(fade_in, fade_out); fade > 0)
+        float fade = max(fade_in, fade_out);
+        if (fade > 0)
             r.iquad(ivec2(0), screen_size).center().color(fvec3(0)).alpha(fade);
 
         { // Gui panel.
@@ -1409,6 +1450,17 @@ struct World
             // Buttons.
             for (const Gui::ButtonList *list : buttonlists)
                 list->Draw();
+
+            // Level name
+            if (float alpha = 1 - fade; alpha > 0)
+            {
+                constexpr fvec3 color = fvec3(131,185,195)/255;
+                constexpr int half_spacing = 6;
+                std::string index = FMT("#{}", map.level_index + 1);
+                r.itext(ivec2(0, screen_size.y / 2 - atlas.panel.size.y / 2 - half_spacing * !map.data.level_name.empty()), Graphics::Text(Fonts::main, index)).color(color);
+                if (!map.data.level_name.empty())
+                    r.itext(ivec2(0, screen_size.y / 2 - atlas.panel.size.y / 2 + half_spacing), Graphics::Text(Fonts::main, FMT("\"{}\"", map.data.level_name))).color(color);
+            }
         }
 
         // Vignette.

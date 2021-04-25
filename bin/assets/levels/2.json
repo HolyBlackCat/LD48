@@ -22,7 +22,7 @@
                 {
                  "height":0,
                  "id":1,
-                 "name":"Worm{len=4,dir=(1,0)}",
+                 "name":"Start{len=4,dir=(1,0)}",
                  "point":true,
                  "rotation":0,
                  "type":"",
