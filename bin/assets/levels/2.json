@@ -22,7 +22,7 @@
                 {
                  "height":0,
                  "id":1,
-                 "name":"Start{len=4,dir=(1,0)}",
+                 "name":"Start{len=4,dir=(1,0),dirt=3,bombs=3,rev=4}",
                  "point":true,
                  "rotation":0,
                  "type":"",

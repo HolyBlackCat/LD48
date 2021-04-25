@@ -55,6 +55,16 @@ namespace Draw
         r.iquad(pos - bg_padding - text_size with(x /= 2), text_size + bg_padding * 2).color(fvec3(0)).alpha(0.75);
         r.itext(pos, text).align(fvec2(0,1)).color(fvec3(1));
     }
+
+    void InitAtlas()
+    {
+        static bool once = true;
+        if (once)
+        {
+            once = false;
+            texture_atlas.InitRegions(atlas, ".png");
+        }
+    }
 }
 
 namespace Sounds
@@ -1457,9 +1467,9 @@ struct World
                 constexpr fvec3 color = fvec3(131,185,195)/255;
                 constexpr int half_spacing = 6;
                 std::string index = FMT("#{}", map.level_index + 1);
-                r.itext(ivec2(0, screen_size.y / 2 - atlas.panel.size.y / 2 - half_spacing * !map.data.level_name.empty()), Graphics::Text(Fonts::main, index)).color(color);
+                r.itext(ivec2(0, screen_size.y / 2 - atlas.panel.size.y / 2 - half_spacing * !map.data.level_name.empty()), Graphics::Text(Fonts::main, index)).color(color).alpha(alpha);
                 if (!map.data.level_name.empty())
-                    r.itext(ivec2(0, screen_size.y / 2 - atlas.panel.size.y / 2 + half_spacing), Graphics::Text(Fonts::main, FMT("\"{}\"", map.data.level_name))).color(color);
+                    r.itext(ivec2(0, screen_size.y / 2 - atlas.panel.size.y / 2 + half_spacing), Graphics::Text(Fonts::main, FMT("\"{}\"", map.data.level_name))).color(color).alpha(alpha);
             }
         }
 
@@ -1502,13 +1512,7 @@ namespace States
 
         Game()
         {
-            static bool once = true;
-            if (once)
-            {
-                once = false;
-                texture_atlas.InitRegions(atlas, ".png");
-            }
-
+            Draw::InitAtlas();
             LoadMap(0);
         }
 
@@ -1519,7 +1523,12 @@ namespace States
             w.Tick();
 
             if (auto next_level = w.ShouldChangeLevel())
-                LoadMap(*next_level);
+            {
+                if (*next_level < Map::GetLevelCount())
+                    LoadMap(*next_level);
+                else
+                    next_state.Set("Final");
+            }
         }
 
         void Render() const override
@@ -1530,6 +1539,64 @@ namespace States
             r.BindShader();
 
             w.Render();
+
+            r.Finish();
+        }
+    };
+
+    STRUCT( Final EXTENDS GameUtils::State::BasicState )
+    {
+        UNNAMED_MEMBERS()
+
+        int time = 0;
+
+        int worm_segments = 8;
+
+        Final()
+        {
+            Draw::InitAtlas();
+        }
+
+        void Tick(const GameUtils::State::NextStateSelector &next_state) override
+        {
+            (void)next_state;
+            if (time > 800)
+                Program::Exit();
+
+            time++;
+        }
+
+        void Render() const override
+        {
+            Graphics::SetClearColor(fvec3(0));
+            Graphics::Clear();
+
+            r.BindShader();
+
+            constexpr int y_offset = 12;
+
+            { // Worm.
+                ivec2 pos(-screen_size.x / 2 - 60 + time, y_offset);
+
+                // Head.
+                r.iquad(pos, atlas.worm.region(ivec2(1,1) * tile_size, ivec2(tile_size))).center();
+                pos.x -= tile_size;
+
+                // Body.
+                for (int i = 0; i < worm_segments; i++)
+                {
+                    r.iquad(pos, atlas.worm.region(ivec2(0,0) * tile_size, ivec2(tile_size))).center();
+                    pos.x -= tile_size;
+                }
+
+                // Tail.
+                r.iquad(pos, atlas.worm.region(ivec2(2,2) * tile_size, ivec2(tile_size))).center();
+            }
+
+            constexpr int t1 = 200, t2 = 320;
+            constexpr int text_anim_len = 60;
+            r.itext(ivec2(0,y_offset - 32), Graphics::Text(Fonts::main, "That's all!")).alpha(smoothstep(clamp(Math::linear_mapping<float>(t1, t1 + text_anim_len, 0, 1)(time))));
+            r.itext(ivec2(0,y_offset + 32), Graphics::Text(Fonts::main, "Thanks for playing my game")).alpha(smoothstep(clamp(Math::linear_mapping<float>(t2, t2 + text_anim_len, 0, 1)(time))));
 
             r.Finish();
         }
