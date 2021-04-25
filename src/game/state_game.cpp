@@ -245,7 +245,7 @@ namespace Gui
             r.iquad(pos, atlas.button_icons.region(ivec2(Button::Size() * GetIconIndex(), 0), ivec2(Button::Size()))).alpha(bg_variant == 2 ? 0.75 : 1);
             if (subscript)
             {
-                r.iquad(pos + Size() - ivec2(atlas.button_subscripts.size.y), atlas.button_subscripts.region(ivec2(atlas.button_subscripts.size.y * clamp(*subscript, 0, 9), 0), ivec2(atlas.button_subscripts.size.y)));
+                r.iquad(pos + Size() - ivec2(atlas.button_subscripts.size.y), atlas.button_subscripts.region(ivec2(atlas.button_subscripts.size.y * clamp(*subscript, 0, 10), 0), ivec2(atlas.button_subscripts.size.y)));
                 if (IsBlocked())
                     r.iquad(pos, ivec2(Size())).tex(atlas.button.pos + atlas.button.size - 0.5f, fvec2(0)).alpha(0.5);
             }
@@ -1826,6 +1826,7 @@ struct World
                 ivec2 midpoint = worm.segments[worm.segments.size() / 2];
 
                 std::reverse(worm.segments.begin(), worm.segments.end());
+                worm.crawl_offset = 0;
 
                 Sounds::reverse(midpoint * tile_size + tile_size / 2);
 

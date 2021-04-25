@@ -124,8 +124,8 @@ struct ProgramState : Program::DefaultBasicState
 
         mouse.HideCursor();
 
-        // state_manager.NextState().Set("Menu"); // Start from the menu.
-        state_manager.NextState().Set("Game", "-1"); // Start from the last level.
+        state_manager.NextState().Set("Menu"); // Start from the menu.
+        // state_manager.NextState().Set("Game", "-1"); // Start from the last level.
     }
 };
 
