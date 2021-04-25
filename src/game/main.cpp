@@ -22,7 +22,7 @@ namespace Fonts
 }
 
 Graphics::TextureAtlas texture_atlas = []{
-    Graphics::TextureAtlas ret(ivec2(2048), "assets/_images", "assets/atlas.png", "assets/atlas.refl");
+    Graphics::TextureAtlas ret(ivec2(1024), "assets/_images", "assets/atlas.png", "assets/atlas.refl");
     auto font_region = ret.Get("font_storage.png");
 
     Unicode::CharSet glyph_ranges;
@@ -124,7 +124,8 @@ struct ProgramState : Program::DefaultBasicState
 
         mouse.HideCursor();
 
-        state_manager.NextState().Set("Menu");
+        // state_manager.NextState().Set("Menu"); // Start from the menu.
+        state_manager.NextState().Set("Game", "-1"); // Start from the last level.
     }
 };
 

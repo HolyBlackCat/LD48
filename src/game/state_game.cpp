@@ -5,7 +5,7 @@
 
 SIMPLE_STRUCT( Atlas
     DECL(Graphics::TextureAtlas::Region)
-        worm, tiles, vignette, panel, button, button_icons, button_subscripts, cursor, mouse_pointer, bug
+        worm, tiles, vignette, panel, button, button_icons, button_subscripts, cursor, mouse_pointer, bug, hint_arrow
 )
 static Atlas atlas;
 
@@ -691,6 +691,8 @@ namespace MapPoints
         int num_bait = 0;
         int num_bombs = 0;
         int num_reverses = 0;
+
+        bool hint_left_panel = false, hint_right_panel = false;
     };
 
     STRUCT( Base POLYMORPHIC )
@@ -709,6 +711,7 @@ namespace MapPoints
             DECL(int INIT=0 ATTR Refl::Optional) bait
             DECL(int INIT=0 ATTR Refl::Optional) bombs
             DECL(int INIT=0 ATTR Refl::Optional) rev
+            DECL(bool INIT=false ATTR Refl::Optional) hint_l, hint_r
         )
 
         void Process(State &state, ivec2 tile_pos) override
@@ -722,10 +725,14 @@ namespace MapPoints
             state.worm_starting_pos = tile_pos;
             state.worm_starting_dir = DirFromEnum(dir);
             state.worm_starting_len = len;
+
             state.num_dirt = dirt;
             state.num_bait = bait;
             state.num_bombs = bombs;
             state.num_reverses = rev;
+
+            state.hint_left_panel = hint_l;
+            state.hint_right_panel = hint_r;
         }
     };
 
@@ -1216,7 +1223,7 @@ struct Worm
             std::optional<ivec2> prev_delta, next_delta;
             for (size_t i = 0; i < segments.size(); i++) LOOP_NAME(ground)
             {
-                if (TileIsSolid(segments[i] with(y++)))
+                if (TileIsSolid(segments[i]) || TileIsSolid(segments[i] with(y++)))
                 {
                     on_ground = true;
                     supported_segments[i] = true;
@@ -1531,6 +1538,8 @@ struct World
     bool hovered_tile_valid = false;
     bool any_tool_enabled = false;
 
+    int tutorial_hint_timer = 0;
+
     inline static Gui::StickyButton button_restart = {0, "[R] Restart level"};
     inline static Gui::Checkbox checkbox_pause = {2, 1, true, "[Space] Play/pause"};
     inline static Gui::Checkbox checkbox_halfspeed = {3, 4, false, "[Tab] Change game speed"};
@@ -1817,6 +1826,10 @@ struct World
             if (ShouldFadeOut())
                 clamp_var_max(fade_out += 0.055);
         }
+
+        { // Tutorial.
+            clamp_var_max(++tutorial_hint_timer, 1000);
+        }
     }
 
     void Render() const
@@ -1855,13 +1868,34 @@ struct World
                 r.iquad(*hovered_tile_pos * tile_size + tile_size/2 - camera_pos, atlas.cursor.region(ivec2(atlas.cursor.size.y * !hovered_tile_valid, 0), ivec2(atlas.cursor.size.y))).alpha(0.9 + 0.1 * sin(window.Ticks() % 120 / 120.f * 2 * f_pi)).center();
         }
 
+        // Vignette.
+        r.iquad(ivec2(0), atlas.vignette).center();
+
+        { // Tutorial hints.
+            constexpr int peak_time = 150, anim_halflen = 90;
+            float alpha = 1 - clamp_max(abs(tutorial_hint_timer - peak_time), anim_halflen) / float(anim_halflen);
+
+            if (alpha > 0.001)
+            {
+                alpha = smoothstep(alpha) * 0.5;
+
+                for (int s : {-1, 1})
+                {
+                    if (s < 0 ? !map.data.hint_left_panel : !map.data.hint_right_panel)
+                        continue;
+
+                    constexpr int spacing_to_panel = 8;
+                    const int offset_from_screen_edge = s < 0 ? 42 : 56;
+
+                    r.iquad(ivec2((screen_size.x / 2 - offset_from_screen_edge) * s, screen_size.y / 2 - atlas.panel.size.y - spacing_to_panel - atlas.hint_arrow.size.y / 2), atlas.hint_arrow).center().alpha(alpha);
+                }
+            }
+        }
+
         // Fade.
         float fade = max(fade_in, fade_out);
         if (fade > 0)
             r.iquad(ivec2(0), screen_size).center().color(fvec3(0)).alpha(smoothstep(clamp(fade)));
-
-        // Vignette.
-        r.iquad(ivec2(0), atlas.vignette).center();
 
         { // Gui panel.
             // Panel background.
@@ -1878,7 +1912,7 @@ struct World
                 std::string index = FMT("#{}", map.level_index + 1);
                 r.itext(ivec2(0, screen_size.y / 2 - atlas.panel.size.y / 2 - half_spacing * !map.data.level_name.empty()), Graphics::Text(Fonts::main, index)).color(color).alpha(alpha);
                 if (!map.data.level_name.empty())
-                    r.itext(ivec2(0, screen_size.y / 2 - atlas.panel.size.y / 2 + half_spacing), Graphics::Text(Fonts::main, FMT("\"{}\"", map.data.level_name))).color(color).alpha(alpha);
+                    r.itext(ivec2(0, screen_size.y / 2 - atlas.panel.size.y / 2 + half_spacing), Graphics::Text(Fonts::main, map.data.level_name)).color(color).alpha(alpha);
             }
         }
 
@@ -1898,7 +1932,17 @@ namespace States
 
         void LoadMap(int index)
         {
-            if (map_backup.level_index != index)
+            if (index == -1)
+                index = Map::GetLevelCount()-1;
+
+            constexpr bool always_reload_file =
+                #ifdef NDEBUG
+                false;
+                #else
+                true;
+                #endif
+
+            if (map_backup.level_index != index || always_reload_file)
             {
                 map_backup = Map(index);
 
@@ -1950,9 +1994,14 @@ namespace States
 
         void Tick(const GameUtils::State::NextStateSelector &next_state) override
         {
-            (void)next_state;
-
+            // World tick.
             w.Tick();
+
+            { // Special tutorial interactions.
+                // Once the player enables a tool, never show the right panel hint again.
+                if (w.any_tool_enabled)
+                    map_backup.data.hint_right_panel = false;
+            }
 
             if (auto next_level = w.ShouldChangeLevel())
             {
