@@ -926,6 +926,41 @@ class Map
     }
 };
 
+namespace Progress
+{
+    constexpr std::string_view file_path = "progress.txt";
+
+    SIMPLE_STRUCT( Data
+        DECL(int INIT=0) level // 1-based.
+    )
+
+    [[nodiscard]] Data Load()
+    {
+        try
+        {
+            return Refl::FromString<Data>(Stream::Input(file_path), adjust(Refl::FromStringOptions{}, ignore_missing_fields = true));
+        }
+        catch (...)
+        {
+            return {};
+        }
+    }
+
+    void Save(const Data &data)
+    {
+        try
+        {
+            Stream::Output output = std::string(file_path);
+            Refl::ToString(data, output);
+            output.Flush();
+        }
+        catch (...)
+        {
+            // Do nothing.
+        }
+    }
+}
+
 struct Worm
 {
     std::vector<ivec2> segments; // This is sorted tail-to-head.
@@ -1587,7 +1622,15 @@ namespace States
         void LoadMap(int index)
         {
             if (map_backup.level_index != index)
+            {
                 map_backup = Map(index);
+
+                { // Save progress.
+                    Progress::Data progress = Progress::Load();
+                    clamp_var_min(progress.level, index + 1);
+                    Progress::Save(progress);
+                }
+            }
             ReloadCurrentMap();
         }
 
@@ -1610,7 +1653,14 @@ namespace States
         Game()
         {
             Draw::InitAtlas();
-            LoadMap(0);
+        }
+
+        void Init(const std::string &params) override
+        {
+            int map_index = 0;
+            if (!params.empty())
+                map_index = Refl::FromString<int>(params);
+            LoadMap(map_index);
         }
 
         void Tick(const GameUtils::State::NextStateSelector &next_state) override
@@ -1636,6 +1686,165 @@ namespace States
             r.BindShader();
 
             w.Render();
+
+            r.Finish();
+        }
+    };
+
+    STRUCT( Menu EXTENDS GameUtils::State::BasicState )
+    {
+        UNNAMED_MEMBERS()
+
+        struct Button
+        {
+            Graphics::Text text;
+            ivec2 pos{};
+            ivec2 size{};
+            fvec2 align{};
+
+            Button() {}
+
+            Button(ivec2 pos, fvec2 align, std::string_view str)
+                : pos(pos), align(align)
+            {
+                SetText(str);
+            }
+
+            void SetText(std::string_view str)
+            {
+                text = Graphics::Text(Fonts::main, str);
+                size = text.ComputeStats().size;
+            }
+
+            bool IsHovered() const
+            {
+                constexpr ivec2 padding(4, 4);
+
+                fvec2 offset = -size * (align * 0.5 + 0.5);
+                return (mouse.pos() >= pos + offset - padding).all() && (mouse.pos() < pos + offset + size + padding).all();
+            }
+
+            bool IsClicked() const
+            {
+                return mouse.left.released() && IsHovered();
+            }
+
+            void Draw() const
+            {
+                fvec3 color = IsHovered() ? (mouse.left.down() ? fvec3(109, 212, 12) / 255 : fvec3(247, 251, 14) / 255) : fvec3(0.95);
+                r.itext(pos, text).align(align).color(color);
+            }
+        };
+
+        struct Continue
+        {
+            Button b_continue;
+            Button b_minus, b_plus;
+        };
+        std::optional<Continue> cont;
+        Button b_new_game, b_quit;
+
+        Progress::Data progress;
+
+        int cont_level = -1; // 0-based.
+
+        float fade = 0;
+        std::optional<int> target_level_index; // 0-based.
+
+        static std::string GetContinueString(int level_index)
+        {
+            return FMT("Continue from level #{}", level_index);
+        }
+
+        Menu()
+        {
+            Draw::InitAtlas();
+            progress = Progress::Load();
+            clamp_var_max(progress.level, Map::GetLevelCount());
+            cont_level = progress.level;
+
+            constexpr int button_spacing = 24, plus_minus_spacing = 16;
+
+            // Note that we use a hardcoded level index here, because we don't want the real one to affect positions.
+            int continue_string_w = Graphics::Text(Fonts::main, GetContinueString(42/*sic*/)).ComputeStats().size.x;
+
+            // The X pos of the +/- buttons.
+            int plus_minus_pos_x = continue_string_w / 2 + plus_minus_spacing;
+
+            int pos_y = 0;
+            if (cont_level > 0)
+            {
+                // "Continue" buttons, if needed.
+                cont.emplace();
+                cont->b_continue = Button(ivec2(-continue_string_w/2, pos_y), fvec2(-1, 0), GetContinueString(cont_level));
+                cont->b_minus = Button(ivec2(plus_minus_pos_x, pos_y), fvec2(0), "<");
+                cont->b_plus = Button(ivec2(plus_minus_pos_x + plus_minus_spacing, pos_y), fvec2(0), ">");
+            }
+            pos_y += button_spacing;
+            b_new_game = Button(ivec2(0, pos_y), fvec2(0), "New game");
+            pos_y += button_spacing;
+            b_quit = Button(ivec2(0, pos_y), fvec2(0), "Quit");
+        }
+
+        void Tick(const GameUtils::State::NextStateSelector &next_state) override
+        {
+            (void)next_state;
+
+            if (!target_level_index)
+            {
+                if (cont)
+                {
+                    if (cont->b_continue.IsClicked())
+                    {
+                        target_level_index = cont_level - 1;
+                    }
+                    if (cont->b_minus.IsClicked())
+                    {
+                        clamp_var_min(--cont_level, 1);
+                        cont->b_continue.SetText(GetContinueString(cont_level));
+                    }
+                    if (cont->b_plus.IsClicked())
+                    {
+                        clamp_var_max(++cont_level, progress.level);
+                        cont->b_continue.SetText(GetContinueString(cont_level));
+                    }
+                }
+
+                if (b_new_game.IsClicked())
+                    target_level_index = 0;
+
+                if (b_quit.IsClicked())
+                    Program::Exit();
+            }
+            else
+            {
+                if (fade >= 1)
+                    next_state.Set("Game", Refl::ToString(target_level_index.value_or(0)));
+                clamp_var_max(fade += 0.025);
+            }
+
+        }
+
+        void Render() const override
+        {
+            Graphics::SetClearColor(fvec3(0));
+            Graphics::Clear();
+
+            r.BindShader();
+
+            if (cont)
+            {
+                cont->b_continue.Draw();
+                cont->b_plus.Draw();
+                cont->b_minus.Draw();
+            }
+            b_new_game.Draw();
+            b_quit.Draw();
+
+            Draw::MousePointer();
+
+            if (fade > 0)
+                r.iquad(ivec2(0), screen_size).center().color(fvec3(0)).alpha(smoothstep(fade));
 
             r.Finish();
         }

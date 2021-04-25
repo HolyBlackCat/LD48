@@ -123,7 +123,7 @@ struct ProgramState : Program::DefaultBasicState
 
         mouse.HideCursor();
 
-        state_manager.NextState().Set("Game");
+        state_manager.NextState().Set("Menu");
     }
 };
 
