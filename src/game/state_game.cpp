@@ -1142,6 +1142,11 @@ struct Worm
         };
 
         auto p_fwd = GetPathPriority(pos + current_dir);
+
+        // If we're at the starting point, only go forward.
+        if (pos == map.data.worm_starting_pos)
+            return p_fwd > 0 ? current_dir : ivec2();
+
         auto p_left = GetPathPriority(pos + current_dir.rot90(-1));
         auto p_right = GetPathPriority(pos + current_dir.rot90(1));
         auto p_back = go_back_if_stuck ? GetPathPriority(pos - current_dir) : 0;
