@@ -7,15 +7,42 @@
 #include "program/errors.h"
 
 // This file offers compile-time strings that can be used as template parameters.
-// Example 1:
-//     template <Meta::ConstString Name> void foo() {std::cout << Name.str << '\n';}
-//     foo<"123">();
-// Example 2:
-//     template <Meta::ConstString Name> void foo(Meta::ConstStringParam<Name>) {std::cout << Name.str << '\n';}
+// Example:
+//     template <char ...Name> void foo(Meta::ConstStringParam<Name...>) {}
 //     foo("123"_c);
+
 
 namespace Meta
 {
+    template <char ...C>
+    struct ConstStringParam {};
+
+    #ifdef __clang__
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wgnu-string-literal-operator-template"
+    #endif
+
+    template <typename T, T ...C>
+    [[nodiscard]] ConstStringParam<C...> operator""_c()
+    {
+        return {};
+    }
+
+    #ifdef __clang__
+    #pragma clang diagnostic pop
+    #endif
+
+
+    // A better, conformant implementation. Requires Clang 12+.
+    #if 0
+    // This file offers compile-time strings that can be used as template parameters.
+    // Example 1:
+    //     template <Meta::ConstString Name> void foo() {std::cout << Name.str << '\n';}
+    //     foo<"123">();
+    // Example 2:
+    //     template <Meta::ConstString Name> void foo(Meta::ConstStringParam<Name>) {std::cout << Name.str << '\n';}
+    //     foo("123"_c);
+
     // A string that can be used as a template parameter.
     template <std::size_t N>
     struct ConstString
@@ -47,6 +74,7 @@ namespace Meta
     {
         return {};
     }
+    #endif
 }
 
 using Meta::operator""_c;

@@ -36,14 +36,15 @@ namespace Audio
         template <typename T> concept ChannelsOrNullptr = Meta::same_as_any_of<T, Channels, std::nullptr_t>;
         template <typename T> concept FormatOrNullptr = Meta::same_as_any_of<T, Format, std::nullptr_t>;
 
-        template <ChannelsOrNullptr auto ChannelCount, FormatOrNullptr auto FileFormat, Meta::ConstString Name>
+        template <ChannelsOrNullptr auto ChannelCount, FormatOrNullptr auto FileFormat, char ...Name>
         struct RegisterAutoLoadedBuffer
         {
             [[maybe_unused]] inline static const Buffer &ref = []() -> Buffer &
             {
-                auto it = GetAutoLoadedBuffers().find(Name.str);
+                constexpr char name_str[] = {Name..., '\0'};
+                auto it = GetAutoLoadedBuffers().find(name_str);
                 ASSERT(it == GetAutoLoadedBuffers().end(), "Attempt to register a duplicate auto-loaded sound file. This shouldn't be possible.");
-                AutoLoadedBuffer &data = GetAutoLoadedBuffers().try_emplace(it, Name.str)->second;
+                AutoLoadedBuffer &data = GetAutoLoadedBuffers().try_emplace(it, name_str)->second;
                 if constexpr (!std::is_null_pointer_v<decltype(ChannelCount)>)
                     data.channels_override = ChannelCount;
                 if constexpr (!std::is_null_pointer_v<decltype(FileFormat)>)
@@ -55,10 +56,10 @@ namespace Audio
 
     // Returns a reference to a buffer, loaded from the filename passed as the parameter.
     // The load doesn't happen at the call point, and is done by `LoadMentionedFiles()`, which magically knows all files that it needs to load in this manner.
-    template <impl::ChannelsOrNullptr auto ChannelCount = nullptr, impl::FormatOrNullptr auto FileFormat = nullptr, Meta::ConstString Name>
-    [[nodiscard]] const Buffer &File(Meta::ConstStringParam<Name>)
+    template <impl::ChannelsOrNullptr auto ChannelCount = nullptr, impl::FormatOrNullptr auto FileFormat = nullptr, char ...Name>
+    [[nodiscard]] const Buffer &File(Meta::ConstStringParam<Name...>)
     {
-        return impl::RegisterAutoLoadedBuffer<ChannelCount, FileFormat, Name>::ref;
+        return impl::RegisterAutoLoadedBuffer<ChannelCount, FileFormat, Name...>::ref;
     }
 
     // Loads (or reloads) all files mentioned in all known `Audio::File(...)` calls.
