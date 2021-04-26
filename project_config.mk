@@ -1,10 +1,3 @@
-# Windows cross-compilation commands:
-# Clean:
-#     rm -rf win_* && cp -af bin win_bin && rm win_bin/earthwyrm win_bin/*.so*
-# Build:
-#     LANG= make HOST_OS=linux OBJECT_DIR=win_obj OUTPUT_FILE=win_bin/earthwyrm LIBRARY_PACK_DIR=../_win_dependencies mode=debug_hard -j12
-
-
 # Sources
 SOURCE_DIRS := src lib
 
