@@ -1,3 +1,10 @@
+# Windows cross-compilation commands:
+# Clean:
+#     rm -rf win_* && cp -af bin win_bin && rm win_bin/earthwyrm win_bin/*.so*
+# Build:
+#     LANG= make HOST_OS=linux OBJECT_DIR=win_obj OUTPUT_FILE=win_bin/earthwyrm LIBRARY_PACK_DIR=../_win_dependencies mode=debug_hard -j12
+
+
 # Sources
 SOURCE_DIRS := src lib
 
@@ -10,7 +17,7 @@ LINKER_MODE := CXX
 
 # Dependency set name
 LIBRARY_PACK_NAME := imp-re_deps_2021-03-11
-USED_PACKAGES := sdl2 openal freetype2 ogg vorbis vorbisfile zlib fmt double-conversion bullet
+USED_PACKAGES := sdl2 openal freetype2 ogg vorbis vorbisfile zlib fmt double-conversion# bullet
 
 
 # Flags
@@ -41,6 +48,19 @@ $(mode_flags) LDFLAGS += -O3 -pg
 ifeq ($(TARGET_OS),windows)
 $(mode_flags) LDFLAGS += -mwindows
 endif
+
+
+# Executable icon.
+ifeq ($(TARGET_OS),windows)
+bin/assets/_icon.ico: $(wildcard bin/assets/_icon_sources/*.png)
+	$(info [Icon] $@)
+	@convert $^ $@
+
+sources/icon.rc: bin/assets/_icon.ico
+SOURCES += src/icon.rc
+
+endif
+
 
 # File-specific flags
 FILE_SPECIFIC_FLAGS := lib/implementation.cpp lib/cglfl.cpp > -g0 -O3
