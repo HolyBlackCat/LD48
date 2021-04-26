@@ -3,7 +3,7 @@
 #include "signals/connection.h"
 #include "utils/json.h"
 
-constexpr std::string_view game_version = "v1.0";
+constexpr std::string_view game_version = "v1.2";
 
 SIMPLE_STRUCT( Atlas
     DECL(Graphics::TextureAtlas::Region)
