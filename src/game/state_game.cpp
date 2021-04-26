@@ -1558,35 +1558,37 @@ struct World
 
     int tutorial_hint_timer = 0;
 
-    inline static Gui::StickyButton button_restart = {0, "[R] Restart level"};
-    inline static Gui::Checkbox checkbox_pause = {2, 1, true, "[Space] Play/pause"};
-    inline static Gui::Checkbox checkbox_halfspeed = {3, 4, false, "[Tab] Change game speed"};
-    inline static Gui::ButtonList buttons_game_control = Gui::ButtonList(-screen_size.x / 2, -1, {&button_restart, &checkbox_halfspeed, &checkbox_pause});
 
-    inline static Gui::RadioButtonList radiobuttons_tools;
-    inline static Gui::RadioButton button_add_dirt = {6, radiobuttons_tools, "[1] Create dirt"};
-    inline static Gui::RadioButton button_add_bait = {8, radiobuttons_tools, "[2] Create bait"};
-    inline static Gui::Button button_reverse = {7, "[3] Reverse"};
-    inline static Gui::RadioButton button_bomb = {5, radiobuttons_tools, "[4] Destroy object"};
-    inline static Gui::ButtonList buttons_tools = Gui::ButtonList(screen_size.x / 2, 1, {&button_add_dirt, &button_add_bait, &button_reverse, &button_bomb});
 
-    inline static const std::vector<Gui::ButtonList *> buttonlists = {&buttons_game_control, &buttons_tools};
+    static Gui::StickyButton &button_restart()       {static Gui::StickyButton ret = {0, "[R] Restart level"};                                                                                   return ret;}
+    static Gui::Checkbox     &checkbox_pause()       {static Gui::Checkbox ret     = {2, 1, true, "[Space] Play/pause"};                                                                         return ret;}
+    static Gui::Checkbox     &checkbox_halfspeed()   {static Gui::Checkbox ret     = {3, 4, false, "[Tab] Change game speed"};                                                                   return ret;}
+    static Gui::ButtonList   &buttons_game_control() {static Gui::ButtonList ret   = Gui::ButtonList(-screen_size.x / 2, -1, {&button_restart(), &checkbox_halfspeed(), &checkbox_pause()});           return ret;}
+
+    static Gui::RadioButtonList &radiobuttons_tools() {static Gui::RadioButtonList ret; return ret;}
+    static Gui::RadioButton  &button_add_dirt()      {static Gui::RadioButton ret  = {6, radiobuttons_tools(), "[1] Create dirt"};                                                                 return ret;}
+    static Gui::RadioButton  &button_add_bait()      {static Gui::RadioButton ret  = {8, radiobuttons_tools(), "[2] Create bait"};                                                                 return ret;}
+    static Gui::Button       &button_reverse()       {static Gui::Button ret       = {7, "[3] Reverse"};                                                                                         return ret;}
+    static Gui::RadioButton  &button_bomb()          {static Gui::RadioButton ret  = {5, radiobuttons_tools(), "[4] Destroy object"};                                                              return ret;}
+    static Gui::ButtonList   &buttons_tools()        {static Gui::ButtonList ret   = Gui::ButtonList(screen_size.x / 2, 1, {&button_add_dirt(), &button_add_bait(), &button_reverse(), &button_bomb()}); return ret;}
+
+    static const std::vector<Gui::ButtonList *> &buttonlists() {static const std::vector<Gui::ButtonList *> ret = {&buttons_game_control(), &buttons_tools()}; return ret;}
 
     World()
     {
-        button_restart.hotkey = Input::r;
-        checkbox_pause.hotkey = Input::space;
-        checkbox_halfspeed.hotkey = Input::tab;
+        button_restart().hotkey = Input::r;
+        checkbox_pause().hotkey = Input::space;
+        checkbox_halfspeed().hotkey = Input::tab;
 
-        button_add_dirt.hotkey = Input::_1;
-        button_add_bait.hotkey = Input::_2;
-        button_reverse.hotkey = Input::_3;
-        button_bomb.hotkey = Input::_4;
+        button_add_dirt().hotkey = Input::_1;
+        button_add_bait().hotkey = Input::_2;
+        button_reverse().hotkey = Input::_3;
+        button_bomb().hotkey = Input::_4;
     }
 
     bool ShouldFadeOut() const
     {
-        if (button_restart.was_clicked)
+        if (button_restart().was_clicked)
             return true; // Manual restart.
         if (worm.out_of_bounds)
             return true; // Out of bounds.
@@ -1600,20 +1602,20 @@ struct World
     std::optional<int> ShouldChangeLevel()
     {
         if (ShouldFadeOut() && fade_out >= 1)
-            return worm.dead || worm.out_of_bounds || button_restart.was_clicked ? map.level_index : map.level_index + 1;
+            return worm.dead || worm.out_of_bounds || button_restart().was_clicked ? map.level_index : map.level_index + 1;
         return {};
     }
 
     void Tick()
     {
         // The logic affected by game speed.
-        for (int i = 0; i < (checkbox_halfspeed.enabled ? 1 : 2); i++)
+        for (int i = 0; i < (checkbox_halfspeed().enabled ? 1 : 2); i++)
         {
             // Worm.
-            worm.Tick(map, par, !checkbox_pause.enabled);
+            worm.Tick(map, par, !checkbox_pause().enabled);
 
             // Bugs.
-            if (!checkbox_pause.enabled)
+            if (!checkbox_pause().enabled)
             {
                 // Tick.
                 for (Bug &bug : bugs)
@@ -1624,7 +1626,7 @@ struct World
             }
 
             // Worm-bug interaction.
-            if (!checkbox_pause.enabled && !worm.dead)
+            if (!checkbox_pause().enabled && !worm.dead)
             {
                 for (ivec2 seg : worm.segments)
                 {
@@ -1653,14 +1655,14 @@ struct World
 
         { // Gui.
             // Update button subscripts.
-            button_add_dirt.subscript = map.data.num_dirt;
-            button_add_bait.subscript = map.data.num_bait;
-            button_bomb.subscript = map.data.num_bombs;
-            button_reverse.subscript = map.data.num_reverses;
+            button_add_dirt().subscript = map.data.num_dirt;
+            button_add_bait().subscript = map.data.num_bait;
+            button_bomb().subscript = map.data.num_bombs;
+            button_reverse().subscript = map.data.num_reverses;
 
             { // Button blocking conditions.
                 { // "Reverse worm" button.
-                    bool &block = button_reverse.force_blocked;
+                    bool &block = button_reverse().force_blocked;
                     block = false;
 
                     if (!block && (worm.dead || worm.out_of_bounds))
@@ -1675,7 +1677,7 @@ struct World
             // Button ticks.
             if (!ShouldFadeOut())
             {
-                for (Gui::ButtonList *list : buttonlists)
+                for (Gui::ButtonList *list : buttonlists())
                     list->Tick();
             }
 
@@ -1683,11 +1685,11 @@ struct World
                 // Unselect tool.
                 if (mouse.right.pressed())
                 {
-                    for (size_t i = 0; i < radiobuttons_tools.con.Size(); i++)
+                    for (size_t i = 0; i < radiobuttons_tools().con.Size(); i++)
                     {
-                        if (radiobuttons_tools.con[i]->active)
+                        if (radiobuttons_tools().con[i]->active)
                         {
-                            radiobuttons_tools.con[i]->active = false;
+                            radiobuttons_tools().con[i]->active = false;
                             Sounds::click(mouse.pos());
                         }
                     }
@@ -1698,9 +1700,9 @@ struct World
         { // Using tools.
             // Check if any tool is enabled.
             any_tool_enabled = false;
-            for (size_t i = 0; i < radiobuttons_tools.con.Size(); i++)
+            for (size_t i = 0; i < radiobuttons_tools().con.Size(); i++)
             {
-                if (radiobuttons_tools.con[i]->active)
+                if (radiobuttons_tools().con[i]->active)
                 {
                     any_tool_enabled = true;
                     break;
@@ -1720,7 +1722,7 @@ struct World
             // Specific tile-related tools.
             if (hovered_tile_pos)
             {
-                if (button_bomb.active)
+                if (button_bomb().active)
                 {
                     // Bomb.
                     hovered_tile_valid = map.InfoAt(*hovered_tile_pos).bombable;
@@ -1791,7 +1793,7 @@ struct World
                         map.data.num_bombs--;
                     }
                 }
-                else if (button_add_dirt.active)
+                else if (button_add_dirt().active)
                 {
                     // Add dirt.
                     hovered_tile_valid = map.At(*hovered_tile_pos).type == Map::Tile::air;
@@ -1807,7 +1809,7 @@ struct World
                         map.data.num_dirt--;
                     }
                 }
-                else if (button_add_bait.active)
+                else if (button_add_bait().active)
                 {
                     // Add bait.
                     hovered_tile_valid = map.At(*hovered_tile_pos).type == Map::Tile::air;
@@ -1826,7 +1828,7 @@ struct World
             }
 
             // Reverse worm.
-            if (button_reverse.IsClicked())
+            if (button_reverse().IsClicked())
             {
                 map.data.num_reverses--;
                 ivec2 midpoint = worm.segments[worm.segments.size() / 2];
@@ -1836,8 +1838,8 @@ struct World
 
                 Sounds::reverse(midpoint * tile_size + tile_size / 2);
 
-                for (size_t i = 0; i < radiobuttons_tools.con.Size(); i++)
-                    radiobuttons_tools.con[i]->active = false;
+                for (size_t i = 0; i < radiobuttons_tools().con.Size(); i++)
+                    radiobuttons_tools().con[i]->active = false;
             }
         }
 
@@ -1922,7 +1924,7 @@ struct World
             // Panel background.
             r.iquad(ivec2(0, screen_size.y / 2), ivec2(screen_size.x, atlas.panel.size.y)).tex(atlas.panel.pos, atlas.panel.size).center(fvec2(0.5, atlas.panel.size.y));
             // Buttons.
-            for (const Gui::ButtonList *list : buttonlists)
+            for (const Gui::ButtonList *list : buttonlists())
                 list->Draw();
 
             // Level name
@@ -1978,12 +1980,12 @@ namespace States
 
         void ReloadCurrentMap()
         {
-            w.checkbox_pause.enabled = true;
-            w.button_restart.was_clicked = false;
-            for (size_t i = 0; i < w.radiobuttons_tools.con.Size(); i++)
+            w.checkbox_pause().enabled = true;
+            w.button_restart().was_clicked = false;
+            for (size_t i = 0; i < w.radiobuttons_tools().con.Size(); i++)
             {
-                w.radiobuttons_tools.con[i]->active = false;
-                w.radiobuttons_tools.con[i]->subscript = 0;
+                w.radiobuttons_tools().con[i]->active = false;
+                w.radiobuttons_tools().con[i]->subscript = 0;
             }
 
             w = World{};
